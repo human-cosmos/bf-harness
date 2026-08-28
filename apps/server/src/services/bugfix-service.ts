@@ -147,7 +147,6 @@ export class BugfixService {
     const analyzableStatuses: TaskStatus[] = [
       "DRAFT",
       "PREPARING_WORKSPACE",
-      "WAITING_FOR_PLAN_APPROVAL",
     ];
     if (!analyzableStatuses.includes(task.status)) {
       throw new Error(`Cannot start analysis from status ${task.status}`);

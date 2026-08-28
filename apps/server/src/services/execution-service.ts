@@ -100,6 +100,20 @@ export class ExecutionService {
     return { approvalId, decision };
   }
 
+  decideApprovals(
+    taskId: string,
+    approvalIds: string[],
+    decision: "accept" | "decline" | "cancel",
+  ) {
+    this.requireTask(taskId);
+    const decided = [];
+    for (const approvalId of approvalIds) {
+      this.approvals.decide(approvalId, decision);
+      decided.push({ approvalId, decision });
+    }
+    return { decided };
+  }
+
   async generateDiff(taskId: string) {
     const worktree = this.requireWorktree(taskId);
     return this.diffService.generate(worktree.path);

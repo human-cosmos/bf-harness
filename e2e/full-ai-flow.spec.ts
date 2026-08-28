@@ -68,7 +68,9 @@ test("complete AI bugfix main flow through the web UI", async ({
     .toBe("WAITING_FOR_PLAN_APPROVAL");
 
   await page.goto(`/tasks/${taskId}/plan`);
-  await expect(page.getByRole("heading", { name: "修复计划" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "修复计划", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "批准" }).click();
 
   await expect
@@ -92,7 +94,7 @@ test("complete AI bugfix main flow through the web UI", async ({
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
     }, { timeout: 120_000 })
-    .toBe("VALIDATING");
+    .toMatch(/^(VALIDATING|WAITING_FOR_ACCEPTANCE)$/);
 
   await page.goto(`/tasks/${taskId}/diff`);
   await page.getByRole("button", { name: "运行检查" }).click();

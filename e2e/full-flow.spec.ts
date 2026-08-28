@@ -47,7 +47,9 @@ test("create a bugfix task through the web UI", async ({ page, request }) => {
 
   await expect(page).toHaveURL(/\/tasks\/[0-9a-f-]+$/);
   await expect(
-    page.getByText("The application fails when reading README.md"),
+    page.getByRole("heading", {
+      name: "The application fails when reading README.md",
+    }),
   ).toBeVisible();
 });
 

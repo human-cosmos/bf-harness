@@ -41,6 +41,11 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface ProjectSummary extends Project {
+  taskCount: number;
+  pendingTaskCount: number;
+}
+
 export interface BugfixTask {
   id: string;
   projectId: string;
@@ -104,6 +109,17 @@ export interface ValidationOutcome {
   skipReason?: string;
 }
 
+export interface ApprovalRequestItem {
+  id: string;
+  taskId: string;
+  method: string;
+  payload: unknown;
+  riskLevel: string;
+  decision?: "accept" | "decline" | "cancel";
+  decidedAt?: string;
+  createdAt: string;
+}
+
 export interface DeliveryReport {
   id: string;
   taskId: string;
@@ -152,6 +168,8 @@ async function request<T>(url: string, init: RequestOptions = {}): Promise<T> {
 
 export const api = {
   listProjects: () => request<Project[]>("/api/projects"),
+  listProjectSummaries: () =>
+    request<ProjectSummary[]>("/api/projects/summary"),
   createProject: (input: Omit<Project, "id" | "createdAt" | "updatedAt">) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
   pickDirectory: () =>
@@ -163,6 +181,10 @@ export const api = {
     request<{ deleted: boolean }>(`/api/projects/${id}`, { method: "DELETE" }),
   listTasks: (projectId?: string) =>
     request<BugfixTask[]>(`/api/tasks${projectId ? `?projectId=${projectId}` : ""}`),
+  listTaskAttentionSummaries: (projectId: string) =>
+    request<Record<string, TaskAttention>>(
+      `/api/tasks/attention-summary?projectId=${projectId}`,
+    ),
   createTask: (input: Record<string, unknown>) =>
     request<{ task: BugfixTask; contract: TaskContract }>("/api/tasks", {
       method: "POST",
@@ -193,7 +215,8 @@ export const api = {
     request(`/api/tasks/${id}/cancel`, { method: "POST" }),
   deleteTask: (id: string) =>
     request<{ deleted: boolean }>(`/api/tasks/${id}`, { method: "DELETE" }),
-  listApprovals: (id: string) => request<any[]>(`/api/tasks/${id}/approvals`),
+  listApprovals: (id: string) =>
+    request<ApprovalRequestItem[]>(`/api/tasks/${id}/approvals`),
   getDiff: (id: string) => request<DiffResult>(`/api/tasks/${id}/diff`),
   runValidations: (id: string) =>
     request<ValidationOutcome[]>(`/api/tasks/${id}/validate`, {
@@ -204,6 +227,7 @@ export const api = {
     request<ValidationOutcome[]>(`/api/tasks/${id}/validations`),
   continueFix: (id: string) =>
     request(`/api/tasks/${id}/continue-fix`, { method: "POST", timeoutMs: 0 }),
+  getReport: (id: string) => request<DeliveryReport>(`/api/tasks/${id}/report`),
   buildReport: (id: string) =>
     request<DeliveryReport>(`/api/tasks/${id}/report`, {
       method: "POST",
@@ -240,6 +264,15 @@ export const api = {
     request(`/api/tasks/${id}/approvals/${approvalId}/decision`, {
       method: "POST",
       body: JSON.stringify({ decision }),
+    }),
+  decideApprovals: (
+    id: string,
+    approvalIds: string[],
+    decision: "accept" | "decline" | "cancel",
+  ) =>
+    request(`/api/tasks/${id}/approvals/decision-batch`, {
+      method: "POST",
+      body: JSON.stringify({ decision, approvalIds }),
     }),
   listEvents: (id: string, limit = 100, afterSeq = 0) =>
     request<any[]>(`/api/tasks/${id}/events?limit=${limit}&afterSeq=${afterSeq}`),

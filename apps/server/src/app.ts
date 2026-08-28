@@ -125,6 +125,26 @@ export async function buildApp(service: BugfixService) {
 
   app.get("/api/projects", async () => service.projects.list());
 
+  app.get("/api/projects/summary", async () => {
+    return service.projects.list().map((project) => {
+      const tasks = service.tasks.list(project.id);
+      return {
+        ...project,
+        taskCount: tasks.length,
+        pendingTaskCount: tasks.filter((task) =>
+          [
+            "PREPARING_WORKSPACE",
+            "ANALYZING",
+            "WAITING_FOR_PLAN_APPROVAL",
+            "IMPLEMENTING",
+            "VALIDATING",
+            "WAITING_FOR_ACCEPTANCE",
+          ].includes(task.status),
+        ).length,
+      };
+    });
+  });
+
   app.post("/api/projects", async (request, reply) => {
     try {
       return await service.createProject(request.body);
@@ -147,6 +167,18 @@ export async function buildApp(service: BugfixService) {
   app.get("/api/tasks", async (request) => {
     const { projectId } = request.query as { projectId?: string };
     return service.tasks.list(projectId);
+  });
+
+  app.get("/api/tasks/attention-summary", async (request, reply) => {
+    const { projectId } = request.query as { projectId?: string };
+    if (!projectId) {
+      return reply.code(400).send({ error: "projectId is required" });
+    }
+    const summary: Record<string, unknown> = {};
+    for (const task of service.tasks.list(projectId)) {
+      summary[task.id] = service.getAttention(task.id);
+    }
+    return summary;
   });
 
   app.post("/api/tasks", async (request, reply) => {
@@ -329,6 +361,32 @@ export async function buildApp(service: BugfixService) {
     }
   });
 
+  app.post("/api/tasks/:id/approvals/decision-batch", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as {
+      decision?: "accept" | "decline" | "cancel";
+      approvalIds?: string[];
+    };
+    if (
+      !body?.decision ||
+      !Array.isArray(body.approvalIds) ||
+      body.approvalIds.length === 0
+    ) {
+      return reply.code(400).send({
+        error: "decision and non-empty approvalIds are required",
+      });
+    }
+    try {
+      return service.execution.decideApprovals(
+        id,
+        body.approvalIds,
+        body.decision,
+      );
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
   app.get("/api/tasks/:id/diff", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
@@ -363,6 +421,19 @@ export async function buildApp(service: BugfixService) {
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }
+  });
+
+  app.get("/api/tasks/:id/report", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const task = service.tasks.get(id);
+    if (!task) {
+      return reply.code(404).send({ error: "Task not found" });
+    }
+    const report = service.execution.reports.getByTask(id);
+    if (!report) {
+      return reply.code(404).send({ error: "Report not found" });
+    }
+    return report;
   });
 
   app.post("/api/tasks/:id/report", async (request, reply) => {
