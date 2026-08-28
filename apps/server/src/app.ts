@@ -3,6 +3,10 @@ import { platform } from "node:os";
 import { basename } from "node:path";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
+import {
+  PROMPT_TEMPLATE_KEYS,
+  type PromptTemplateKey,
+} from "@bugfix-harness/shared";
 import type { BugfixService } from "./services/bugfix-service.js";
 import { DiskMonitor } from "./services/disk-monitor.js";
 
@@ -108,6 +112,53 @@ export async function buildApp(service: BugfixService) {
     disk: new DiskMonitor().check(process.cwd()),
   }));
 
+  app.get("/api/settings/prompts", async () => {
+    return service.listPromptTemplates();
+  });
+
+  app.put("/api/settings/prompts", async (request, reply) => {
+    const body = request.body as {
+      templates?: Partial<Record<PromptTemplateKey, string>>;
+    } | null;
+    if (!body?.templates || typeof body.templates !== "object") {
+      return reply.code(400).send({ error: "templates is required" });
+    }
+
+    if (Object.keys(body.templates).length === 0) {
+      return reply.code(400).send({ error: "templates must not be empty" });
+    }
+
+    for (const key of Object.keys(body.templates)) {
+      if (!PROMPT_TEMPLATE_KEYS.includes(key as PromptTemplateKey)) {
+        return reply.code(400).send({
+          error: `Unknown prompt template key: ${key}`,
+        });
+      }
+    }
+
+    try {
+      return await service.savePromptTemplates(
+        body.templates as Partial<Record<PromptTemplateKey, string>>,
+      );
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/settings/prompts/reset", async (request, reply) => {
+    const body = request.body as { key?: string } | null;
+    const key = body?.key;
+    if (key !== undefined && !PROMPT_TEMPLATE_KEYS.includes(key as PromptTemplateKey)) {
+      return reply.code(400).send({ error: "Unknown prompt template key" });
+    }
+
+    try {
+      return await service.resetPromptTemplates(key as PromptTemplateKey | undefined);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
   app.get("/api/ws", { websocket: true }, (socket: any) => {
     const unsubscribe = service.events.subscribe((event) => {
       if (socket.readyState === 1) {
@@ -157,11 +208,15 @@ export async function buildApp(service: BugfixService) {
 
   app.delete("/api/projects/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const deleted = service.projects.delete(id);
-    if (!deleted) {
-      return reply.code(404).send({ error: "Project not found" });
+    try {
+      return await service.deleteProject(id);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message === "Project not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
     }
-    return { deleted: true };
   });
 
   app.get("/api/tasks", async (request) => {
@@ -306,7 +361,11 @@ export async function buildApp(service: BugfixService) {
     try {
       return await service.deleteTask(id);
     } catch (error) {
-      return reply.code(400).send({ error: (error as Error).message });
+      const message = (error as Error).message;
+      if (message === "Task not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
     }
   });
 
@@ -344,15 +403,28 @@ export async function buildApp(service: BugfixService) {
     return service.execution.approvals.listByTask(id);
   });
 
-  app.get("/api/tasks/:id/events", async (request) => {
+  app.get("/api/tasks/:id/events", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { limit, afterSeq } = request.query as {
       limit?: string;
       afterSeq?: string;
     };
+    const parsedLimit = limit ? Number(limit) : 100;
+    const parsedAfterSeq = afterSeq ? Number(afterSeq) : 0;
+    if (
+      !Number.isInteger(parsedLimit) ||
+      parsedLimit <= 0 ||
+      parsedLimit > 1000 ||
+      !Number.isInteger(parsedAfterSeq) ||
+      parsedAfterSeq < 0
+    ) {
+      return reply.code(400).send({
+        error: "limit must be a positive integer <= 1000 and afterSeq must be a non-negative integer",
+      });
+    }
     return service.agentEvents.listByTask(id, {
-      limit: limit ? Number(limit) : 100,
-      afterSeq: afterSeq ? Number(afterSeq) : 0,
+      limit: parsedLimit,
+      afterSeq: parsedAfterSeq,
     });
   });
 

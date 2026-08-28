@@ -2,8 +2,12 @@ import {
   createBugfixTaskInputSchema,
   createProjectInputSchema,
   createTaskContract,
+  MAX_PROMPT_TEMPLATE_LENGTH,
+  PROMPT_TEMPLATE_KEYS,
+  type PromptTemplateKey,
   type RepairPlan,
   type TaskStatus,
+  unknownPromptTemplatePlaceholders,
 } from "@bugfix-harness/shared";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -12,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "../db.js";
 import { ProjectRepository } from "../repositories/project-repository.js";
 import { TaskRepository } from "../repositories/task-repository.js";
+import { PromptTemplateRepository } from "../repositories/prompt-template-repository.js";
 import { WorktreeRepository } from "../repositories/worktree-repository.js";
 import { GitWorktreeManager } from "./worktree-manager.js";
 import { WorkflowService } from "./workflow-service.js";
@@ -79,6 +84,7 @@ export class BugfixService {
   readonly worktreeManager: GitWorktreeManager;
   readonly workflow: WorkflowService;
   readonly execution: ExecutionService;
+  readonly promptTemplates: PromptTemplateRepository;
   readonly sessions: AgentSessionRepository;
   readonly agentEvents: AgentEventRepository;
   readonly agent: AgentOrchestrator;
@@ -89,6 +95,7 @@ export class BugfixService {
   private readonly analysisTimeoutMs: number;
   private readonly analysisRuns = new Map<string, AnalysisRun>();
   private readonly backgroundJobs = new Map<string, BackgroundJob>();
+  private readonly activeJobs = new Set<string>();
 
   constructor(options: BugfixServiceOptions) {
     this.events = options.eventBus ?? new EventBus();
@@ -105,12 +112,14 @@ export class BugfixService {
       options.analysisTimeoutMs ??
       Number(process.env.BUGFIX_HARNESS_ANALYSIS_TIMEOUT_MS ?? 600_000);
     this.workflow = new WorkflowService(this.tasks, options.db);
+    this.promptTemplates = new PromptTemplateRepository(options.db);
     this.execution = new ExecutionService(
       options.db,
       this.projects,
       this.tasks,
       this.worktrees,
       this.workflow.plans,
+      this.events,
     );
     this.clarifications = new ClarificationCoordinator(this.events);
     this.sessions = new AgentSessionRepository(options.db);
@@ -125,6 +134,7 @@ export class BugfixService {
       this.agentEvents,
       this.workflow.plans,
       this.codexBin,
+      this.promptTemplates,
       (taskId) => this.prepareWorktree(taskId),
       this.clarifications,
       this.analysisTimeoutMs,
@@ -140,6 +150,88 @@ export class BugfixService {
     const project = this.projects.create(parsed);
     this.events.publish({ type: "project.created", payload: project });
     return project;
+  }
+
+  async deleteProject(projectId: string) {
+    const project = this.projects.get(projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+
+    const taskList = this.tasks.list(projectId);
+    for (const task of taskList) {
+      await this.agent.interruptTask(task.id);
+      this.clarifications.clear(task.id);
+      this.execution.cancelApprovals(task.id);
+      this.analysisRuns.delete(task.id);
+      this.clearTaskJobs(task.id);
+
+      const worktree = this.worktrees.getByTaskId(task.id);
+      if (worktree) {
+        try {
+          await this.worktreeManager.remove(project.repoPath, worktree.path);
+        } catch (error) {
+          console.warn(
+            `Failed to remove worktree for task ${task.id}:`,
+            (error as Error).message,
+          );
+        }
+      }
+    }
+
+    for (const task of taskList) {
+      this.tasks.delete(task.id);
+    }
+
+    if (!this.projects.delete(projectId)) {
+      throw new Error("Project not found");
+    }
+
+    this.events.publish({ type: "project.deleted", payload: { projectId } });
+    return { deleted: true };
+  }
+
+  listPromptTemplates() {
+    return this.promptTemplates.list();
+  }
+
+  savePromptTemplates(
+    templates: Partial<Record<PromptTemplateKey, string>>,
+  ) {
+    const entries = Object.entries(templates) as Array<
+      [PromptTemplateKey, string]
+    >;
+    for (const [key, value] of entries) {
+      if (!PROMPT_TEMPLATE_KEYS.includes(key)) {
+        throw new Error(`Unknown prompt template key: ${key}`);
+      }
+      if (typeof value !== "string" || !value.trim()) {
+        throw new Error(`Prompt template ${key} must be a non-empty string`);
+      }
+      if (value.length > MAX_PROMPT_TEMPLATE_LENGTH) {
+        throw new Error(
+          `Prompt template ${key} exceeds the ${MAX_PROMPT_TEMPLATE_LENGTH} character limit`,
+        );
+      }
+      const unknownPlaceholders = unknownPromptTemplatePlaceholders(value, key);
+      if (unknownPlaceholders.length > 0) {
+        throw new Error(
+          `Prompt template ${key} contains unknown placeholders: ${unknownPlaceholders.join(", ")}`,
+        );
+      }
+    }
+
+    for (const [key, value] of entries) {
+      this.promptTemplates.save(key, value);
+    }
+    return this.promptTemplates.list();
+  }
+
+  resetPromptTemplates(key?: PromptTemplateKey) {
+    if (key && !PROMPT_TEMPLATE_KEYS.includes(key)) {
+      throw new Error(`Unknown prompt template key: ${key}`);
+    }
+    return this.promptTemplates.reset(key);
   }
 
   async createTask(input: unknown) {
@@ -246,6 +338,7 @@ export class BugfixService {
 
     await this.agent.interruptTask(taskId);
     this.clarifications.clear(taskId);
+    this.execution.cancelApprovals(taskId);
     this.workflow.cancelTask(taskId);
     return { status: "CANCELLED" as const };
   }
@@ -258,7 +351,9 @@ export class BugfixService {
 
     await this.agent.interruptTask(taskId);
     this.clarifications.clear(taskId);
+    this.execution.cancelApprovals(taskId);
     this.analysisRuns.delete(taskId);
+    this.clearTaskJobs(taskId);
 
     const worktree = this.worktrees.getByTaskId(taskId);
     if (worktree) {
@@ -279,6 +374,7 @@ export class BugfixService {
     if (!deleted) {
       throw new Error("Task not found");
     }
+    this.events.publish({ type: "task.deleted", taskId, payload: { taskId } });
     return { deleted: true };
   }
 
@@ -379,6 +475,12 @@ export class BugfixService {
     message: string,
     run: () => Promise<unknown>,
   ): BackgroundJob {
+    const activeKey = `${taskId}:${kind}`;
+    if (this.activeJobs.has(activeKey)) {
+      throw new Error(`A ${kind} job is already running for this task`);
+    }
+    this.activeJobs.add(activeKey);
+
     const job: BackgroundJob = {
       id: randomUUID(),
       taskId,
@@ -412,6 +514,9 @@ export class BugfixService {
           taskId,
           payload: { job },
         });
+      })
+      .finally(() => {
+        this.activeJobs.delete(activeKey);
       });
 
     this.events.publish({
@@ -430,6 +535,14 @@ export class BugfixService {
     return [...this.backgroundJobs.values()]
       .filter((job) => job.taskId === taskId)
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  }
+
+  private clearTaskJobs(taskId: string): void {
+    for (const [jobId, job] of this.backgroundJobs) {
+      if (job.taskId === taskId) {
+        this.backgroundJobs.delete(jobId);
+      }
+    }
   }
 
   startImplementJob(taskId: string) {

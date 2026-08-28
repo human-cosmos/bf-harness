@@ -33,6 +33,25 @@ describe("shared schemas", () => {
     ).toThrow();
   });
 
+  it("accepts repo-relative scope paths and rejects empty entries", () => {
+    const parsed = createProjectInputSchema.parse({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: ["AGENTS.md"],
+      allowedPaths: ["src/", "test"],
+      forbiddenPaths: ["node_modules"],
+    });
+    expect(parsed.allowedPaths).toEqual(["src/", "test"]);
+
+    expect(() =>
+      createProjectInputSchema.parse({
+        name: "demo",
+        repoPath: "/tmp/demo",
+        allowedPaths: [""],
+      }),
+    ).toThrow();
+  });
+
   it("creates a task contract from task and project", () => {
     const task = {
       id: "00000000-0000-4000-8000-000000000001",

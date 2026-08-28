@@ -14,7 +14,8 @@ import {
 } from "./approval-policy.js";
 import { DeliveryReportService } from "./delivery-report-service.js";
 import { DiffService } from "./diff-service.js";
-import { ValidationRunner } from "./validation-runner.js";
+import { EventBus } from "./event-bus.js";
+import { ValidationRunner, type ValidationOutcome } from "./validation-runner.js";
 
 export class ExecutionService {
   readonly approvals: ApprovalRequestRepository;
@@ -25,7 +26,14 @@ export class ExecutionService {
   readonly reportService: DeliveryReportService;
   private readonly approvalWaiters = new Map<
     string,
-    (decision: "accept" | "decline" | "cancel") => void
+    {
+      taskId: string;
+      resolve: (decision: "accept" | "decline" | "cancel") => void;
+    }
+  >();
+  private readonly validationRuns = new Map<
+    string,
+    Promise<ValidationOutcome[]>
   >();
 
   constructor(
@@ -34,6 +42,7 @@ export class ExecutionService {
     private readonly tasks: TaskRepository,
     private readonly worktrees: WorktreeRepository,
     private readonly plans: PlanApprovalRepository,
+    private readonly events?: EventBus,
   ) {
     this.approvals = new ApprovalRequestRepository(db);
     this.validationResults = new ValidationResultRepository(db);
@@ -77,6 +86,7 @@ export class ExecutionService {
       request,
       makePolicyContext({
         worktreeRoot: worktree.path,
+        repoRoot: project.repoPath,
         allowedPaths: project.allowedPaths,
         forbiddenPaths: project.forbiddenPaths,
         plannedPaths: plan?.status === "APPROVED" ? plan.content.proposedFiles : [],
@@ -108,6 +118,7 @@ export class ExecutionService {
       request,
       makePolicyContext({
         worktreeRoot: worktree.path,
+        repoRoot: project.repoPath,
         allowedPaths: project.allowedPaths,
         forbiddenPaths: project.forbiddenPaths,
         plannedPaths: plan?.status === "APPROVED" ? plan.content.proposedFiles : [],
@@ -120,14 +131,7 @@ export class ExecutionService {
     const approval = this.approvals.create({
       taskId,
       codexRequestId,
-      method:
-        request.kind === "command"
-          ? "item/commandExecution/requestApproval"
-          : request.kind === "file"
-            ? "item/fileChange/requestApproval"
-            : request.kind === "network"
-              ? "item/network/requestApproval"
-              : "item/permissions/requestApproval",
+      method: request.kind,
       payload: request,
       riskLevel: decision.level,
     });
@@ -143,8 +147,11 @@ export class ExecutionService {
     }
 
     return new Promise((resolve) => {
-      this.approvalWaiters.set(approval.id, (resolvedDecision) => {
-        resolve({ decision: resolvedDecision, approvalId: approval.id });
+      this.approvalWaiters.set(approval.id, {
+        taskId,
+        resolve: (resolvedDecision) => {
+          resolve({ decision: resolvedDecision, approvalId: approval.id });
+        },
       });
     });
   }
@@ -159,8 +166,13 @@ export class ExecutionService {
     const waiter = this.approvalWaiters.get(approvalId);
     if (waiter) {
       this.approvalWaiters.delete(approvalId);
-      waiter(decision);
+      waiter.resolve(decision);
     }
+    this.events?.publish({
+      type: "approval.decided",
+      taskId,
+      payload: { approvalId, decision },
+    });
     return { approvalId, decision };
   }
 
@@ -176,11 +188,31 @@ export class ExecutionService {
       const waiter = this.approvalWaiters.get(approvalId);
       if (waiter) {
         this.approvalWaiters.delete(approvalId);
-        waiter(decision);
+        waiter.resolve(decision);
       }
+      this.events?.publish({
+        type: "approval.decided",
+        taskId,
+        payload: { approvalId, decision },
+      });
       decided.push({ approvalId, decision });
     }
     return { decided };
+  }
+
+  cancelApprovals(taskId: string): void {
+    for (const [approvalId, waiter] of this.approvalWaiters) {
+      if (waiter.taskId === taskId) {
+        this.approvals.decide(approvalId, "cancel");
+        this.approvalWaiters.delete(approvalId);
+        waiter.resolve("cancel");
+        this.events?.publish({
+          type: "approval.decided",
+          taskId,
+          payload: { approvalId, decision: "cancel" },
+        });
+      }
+    }
   }
 
   async generateDiff(taskId: string) {
@@ -188,11 +220,24 @@ export class ExecutionService {
     return this.diffService.generate(worktree.path);
   }
 
-  async runValidations(taskId: string) {
+  async runValidations(taskId: string): Promise<ValidationOutcome[]> {
+    const existing = this.validationRuns.get(taskId);
+    if (existing) {
+      return existing;
+    }
+
+    const run = this.doRunValidations(taskId).finally(() => {
+      this.validationRuns.delete(taskId);
+    });
+    this.validationRuns.set(taskId, run);
+    return run;
+  }
+
+  private async doRunValidations(taskId: string): Promise<ValidationOutcome[]> {
     const task = this.requireTask(taskId);
     const worktree = this.requireWorktree(taskId);
     const project = this.requireProject(task.projectId);
-    const outcomes = [];
+    const outcomes: ValidationOutcome[] = [];
 
     for (const command of project.validationCommands) {
       const outcome = await this.validationRunner.run(command, worktree.path);

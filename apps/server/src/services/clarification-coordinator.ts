@@ -75,6 +75,7 @@ export class ClarificationCoordinator {
     for (const [key, entry] of this.pending) {
       if (entry.record.taskId === taskId) {
         this.pending.delete(key);
+        entry.resolve({});
       }
     }
   }

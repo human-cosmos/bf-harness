@@ -23,6 +23,18 @@ describe("redaction", () => {
     });
     expect(output.headers.authorization).toContain("[REDACTED:");
   });
+
+  it("redacts passwords containing spaces and quoted values", () => {
+    const output = redactSensitive('password: "my secret value"');
+    expect(output).not.toContain("my secret value");
+    expect(output).toContain("[REDACTED:Password]");
+  });
+
+  it("redacts AWS secret access keys", () => {
+    const output = redactSensitive("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY");
+    expect(output).not.toContain("wJalrXUtnFEMI/K7MDENG");
+    expect(output).toContain("[REDACTED:AWS secret access key]");
+  });
 });
 
 describe("retention", () => {

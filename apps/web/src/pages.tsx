@@ -23,11 +23,14 @@ import {
   type PendingClarification,
   type Project,
   type ProjectSummary,
+  type PromptTemplateKey,
+  type PromptTemplateSetting,
   type TaskAttention,
   type TaskDetail,
   type ValidationCommand,
   type ValidationOutcome,
 } from "./api.js";
+import { MAX_PROMPT_TEMPLATE_LENGTH } from "@bugfix-harness/shared";
 import { useHarnessEvents } from "./use-harness-events.js";
 import { useWorkflowState } from "./use-workflow-state.js";
 import { TaskShell } from "./TaskShell.js";
@@ -561,13 +564,11 @@ function approvalSummary(item: Record<string, unknown>): string {
     return `AI 想运行命令：${String(payload.command ?? "")}`;
   }
   if (method === "file") {
-    const action =
-      payload.action === "delete"
-        ? "删除"
-        : payload.action === "write"
-          ? "修改"
-          : "读取";
-    return `AI 想${action}文件：${String(payload.path ?? "")}`;
+    const path = String(payload.path ?? "");
+    const reason = payload.reason ? `（${String(payload.reason)}）` : "";
+    if (payload.action === "delete") return `AI 想删除文件：${path}${reason}`;
+    if (payload.action === "write") return `AI 想写入：${path}${reason}`;
+    return `AI 想读取文件：${path}${reason}`;
   }
   if (method === "network") {
     return `AI 想访问网络${payload.host ? `：${String(payload.host)}` : ""}`;
@@ -712,10 +713,14 @@ function approvalDetails(item: Record<string, unknown>) {
     ];
   }
   if (method === "file") {
-    return [
+    const details = [
       { label: "路径", value: String(payload.path ?? "—") },
       { label: "操作", value: String(payload.action ?? "—") },
     ];
+    if (payload.reason) {
+      details.push({ label: "说明", value: String(payload.reason) });
+    }
+    return details;
   }
   if (method === "network") {
     return [
@@ -727,6 +732,61 @@ function approvalDetails(item: Record<string, unknown>) {
     return [{ label: "申请理由", value: String(payload.reason ?? "—") }];
   }
   return [{ label: "原始请求", value: JSON.stringify(item.payload ?? {}) }];
+}
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState<"light" | "dark">(() =>
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light",
+  );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {
+      // localStorage may be unavailable in some embedded contexts.
+    }
+  }, [theme]);
+
+  const nextTheme = theme === "dark" ? "light" : "dark";
+  const label = nextTheme === "dark" ? "切换到深色模式" : "切换到浅色模式";
+
+  return (
+    <button
+      type="button"
+      className="theme-toggle"
+      aria-label={label}
+      title={label}
+      onClick={() => setTheme(nextTheme)}
+    >
+      {nextTheme === "dark" ? (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+        </svg>
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+        </svg>
+      )}
+    </button>
+  );
 }
 
 export function Layout() {
@@ -764,9 +824,10 @@ export function Layout() {
               to="/settings"
               className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
             >
-              诊断
+              设置
             </NavLink>
           </nav>
+          <ThemeToggle />
         </div>
       </header>
       <main className="page">
@@ -1231,7 +1292,9 @@ export function NewProjectPage() {
           <div className="form-section">
             <div className="form-section-heading">
               <h2>3. 修改范围</h2>
-              <span className="field-hint">限制 Codex 可以修改哪些文件</span>
+              <span className="field-hint">
+                限制 Codex 可以修改哪些文件。相对路径按仓库根目录解析，例如 src/、node_modules/。
+              </span>
             </div>
           <label className="field">
             允许修改路径（每行一个）
@@ -2789,9 +2852,7 @@ export function ReportPage() {
                 label="需要你确认"
                 value={
                   report.acceptanceChecklist.length
-                    ? report.acceptanceChecklist.every((item) => item.satisfied)
-                      ? "当前检查项均已满足"
-                      : "还有检查项未满足"
+                    ? "请逐项人工确认下方验收条件"
                     : "未提供验收条件，请按实际使用结果判断"
                 }
               />
@@ -2799,18 +2860,17 @@ export function ReportPage() {
           </div>
 
           {report.acceptanceChecklist.length > 0 ? (
-            <div className="card">
-              <div className="card-head">
-                <h2>结果清单</h2>
-              </div>
-              <ul className="checklist">
-                {report.acceptanceChecklist.map((item) => (
-                  <li key={item.criterion} className="check-item">
-                    {item.satisfied ? <CheckIcon /> : <CrossIcon />}
-                    <span>{item.criterion}</span>
-                  </li>
-                ))}
-              </ul>
+              <div className="card">
+                <div className="card-head">
+                  <h2>验收条件（请逐项人工确认）</h2>
+                </div>
+                <ul className="checklist">
+                  {report.acceptanceChecklist.map((item) => (
+                    <li key={item.criterion} className="check-item">
+                      <span>{item.criterion}</span>
+                    </li>
+                  ))}
+                </ul>
             </div>
           ) : null}
 
@@ -2953,6 +3013,10 @@ export function ReportPage() {
 
 export function SettingsPage() {
   const [diagnostics, setDiagnostics] = useState<Record<string, unknown> | null>(null);
+  const [promptTemplates, setPromptTemplates] = useState<PromptTemplateSetting[]>([]);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [showRawDisk, setShowRawDisk] = useState(false);
 
@@ -2963,10 +3027,160 @@ export function SettingsPage() {
       .catch((err) => setError((err as Error).message));
   }, []);
 
+  useEffect(() => {
+    api
+      .getPromptTemplates()
+      .then((templates) => {
+        setPromptTemplates(templates);
+        setDrafts(
+          Object.fromEntries(
+            templates.map((item) => [item.key, item.template]),
+          ),
+        );
+      })
+      .catch((err) => setError((err as Error).message));
+  }, []);
+
+  function updateDraft(key: string, value: string) {
+    setDrafts((current) => ({ ...current, [key]: value }));
+    setMessage("");
+    setError("");
+  }
+
+  async function saveTemplates() {
+    if (promptTemplates.length === 0) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const templates = Object.fromEntries(
+        promptTemplates.map((item) => [item.key, drafts[item.key] ?? item.template]),
+      ) as Partial<Record<PromptTemplateKey, string>>;
+      const saved = await api.savePromptTemplates(templates);
+      setPromptTemplates(saved);
+      setDrafts(
+        Object.fromEntries(saved.map((item) => [item.key, item.template])),
+      );
+      setMessage("提示词已保存。");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function resetTemplates(key?: string) {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const saved = await api.resetPromptTemplates(key as PromptTemplateKey | undefined);
+      setPromptTemplates(saved);
+      setDrafts(
+        Object.fromEntries(saved.map((item) => [item.key, item.template])),
+      );
+      setMessage(key ? "该提示词已恢复默认值。" : "所有提示词已恢复默认值。");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section>
-      <PageHeader kicker="系统" title="系统诊断" />
+      <PageHeader kicker="系统" title="系统设置" />
       <ErrorNotice message={error} />
+      {message ? <div className="notice notice-success">{message}</div> : null}
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>提示词模板</h2>
+            <p className="muted field-hint">
+              管理分析、实施和计划追问阶段发送给 Codex 的提示词。变量会由系统自动替换。
+            </p>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || promptTemplates.length === 0}
+              onClick={() => resetTemplates()}
+            >
+              全部恢复默认
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy || promptTemplates.length === 0}
+              onClick={saveTemplates}
+            >
+              {busy ? "保存中..." : "保存提示词"}
+            </button>
+          </div>
+        </div>
+
+        {promptTemplates.length > 0 ? (
+          <div className="stack">
+            {promptTemplates.map((item) => {
+              const customized = item.template !== item.defaultTemplate;
+              return (
+                <div className="prompt-template" key={item.key}>
+                  <div className="prompt-template-head">
+                    <div>
+                      <div className="card-title-group">
+                        <h3>{item.label}</h3>
+                        <Badge tone={customized ? "active" : "neutral"}>
+                          {customized ? "已自定义" : "默认"}
+                        </Badge>
+                      </div>
+                      <p className="muted field-hint">{item.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy || !customized}
+                      onClick={() => resetTemplates(item.key)}
+                    >
+                      恢复默认
+                    </button>
+                  </div>
+                  <label className="field">
+                    模板内容
+                    <textarea
+                      className="prompt-editor"
+                      aria-label={`${item.label}提示词`}
+                      maxLength={MAX_PROMPT_TEMPLATE_LENGTH}
+                      value={drafts[item.key] ?? item.template}
+                      onChange={(event) =>
+                        updateDraft(item.key, event.target.value)
+                      }
+                    />
+                  </label>
+                  <div className="field-hint">
+                    可用变量：
+                    {item.placeholders.length > 0 ? (
+                      item.placeholders.map((placeholder) => (
+                        <code className="mono" key={placeholder}>
+                          {`{{${placeholder}}}`}
+                        </code>
+                      ))
+                    ) : (
+                      <span>无</span>
+                    )}
+                    <span>，最大 {MAX_PROMPT_TEMPLATE_LENGTH} 字符</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <Loading />
+        )}
+      </div>
+
       {diagnostics ? (
         <>
           <div className="card">

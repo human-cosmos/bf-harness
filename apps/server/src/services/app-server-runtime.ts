@@ -62,12 +62,18 @@ export class AppServerRuntime extends EventEmitter {
   private nextRequestId = 1;
   private readonly pending = new Map<
     number,
-    { resolve: (value: unknown) => void; reject: (error: Error) => void; method: string }
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      method: string;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   private agentText = "";
   private turnCompletions: TurnCompletion[] = [];
   private exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null =
     null;
+  private spawnError: Error | null = null;
 
   readonly options: Required<
     Pick<AppServerRuntimeOptions, "codexBin" | "cwd" | "approvalMode" | "timeoutMs">
@@ -112,42 +118,68 @@ export class AppServerRuntime extends EventEmitter {
     this.child = child;
 
     child.on("error", (error) => {
+      this.spawnError = error;
+      this.rejectPending(error);
       this.emit("childError", error);
     });
     child.on("exit", (code, signal) => {
       this.exitInfo = { code, signal };
+      this.rejectPending(
+        new Error(`app-server exited with ${JSON.stringify({ code, signal })}`),
+      );
       this.emit("exit", { code, signal });
     });
 
-    createInterface({
-      input: child.stdout!,
-      crlfDelay: Infinity,
-    }).on("line", (line) => {
-      if (!line.trim()) {
-        return;
-      }
-      try {
-        this.handleMessage(JSON.parse(line) as RuntimeMessage);
-      } catch (error) {
-        this.options.log("invalid-json-line", { error: (error as Error).message, line });
-      }
-    });
+    if (child.stdout) {
+      createInterface({
+        input: child.stdout,
+        crlfDelay: Infinity,
+      }).on("line", (line) => {
+        if (!line.trim()) {
+          return;
+        }
+        try {
+          this.handleMessage(JSON.parse(line) as RuntimeMessage);
+        } catch (error) {
+          this.options.log("invalid-json-line", {
+            error: (error as Error).message,
+            line,
+          });
+        }
+      });
+    }
 
     return this;
   }
 
   send(message: Record<string, unknown>): void {
-    if (!this.child) {
+    if (!this.child || !this.child.stdin) {
       throw new Error("AppServerRuntime is not started");
     }
-    this.child.stdin!.write(`${JSON.stringify(message)}\n`);
+    if (this.spawnError) {
+      throw new Error(
+        `AppServerRuntime failed to start: ${this.spawnError.message}`,
+      );
+    }
+    this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   rpc(method: string, params: unknown = {}): Promise<unknown> {
     const id = this.nextRequestId++;
-    this.send({ method, id, params });
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject, method });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`${method} timed out after ${this.options.timeoutMs}ms`));
+      }, this.options.timeoutMs);
+
+      this.pending.set(id, { resolve, reject, method, timer });
+      try {
+        this.send({ method, id, params });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -189,12 +221,16 @@ export class AppServerRuntime extends EventEmitter {
     overrides: {
       approvalPolicy?: "on-request" | "never";
       approvalsReviewer?: "user" | "auto-review";
+      baseInstructions?: string;
+      developerInstructions?: string;
     } = {},
   ): Promise<unknown> {
     const result = await this.rpc("thread/resume", {
       threadId,
       approvalPolicy: overrides.approvalPolicy ?? "on-request",
       approvalsReviewer: overrides.approvalsReviewer ?? "user",
+      baseInstructions: overrides.baseInstructions,
+      developerInstructions: overrides.developerInstructions,
     });
     this.currentThreadId =
       (result as { thread?: { id?: string } })?.thread?.id ?? threadId;
@@ -241,6 +277,11 @@ export class AppServerRuntime extends EventEmitter {
   ): Promise<TurnCompletion> {
     const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
     while (this.turnCompletions.length === 0) {
+      if (this.spawnError) {
+        throw new Error(
+          `app-server failed to start: ${this.spawnError.message}`,
+        );
+      }
       if (this.exitInfo) {
         throw new Error(
           `app-server exited before turn completion: ${JSON.stringify(this.exitInfo)}`,
@@ -287,11 +328,20 @@ export class AppServerRuntime extends EventEmitter {
       return;
     }
     this.pending.delete(message.id!);
+    clearTimeout(entry.timer);
     if (message.error) {
       entry.reject(new Error(`${entry.method}: ${JSON.stringify(message.error)}`));
     } else {
       entry.resolve(message.result);
     }
+  }
+
+  private rejectPending(error: Error): void {
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+    this.pending.clear();
   }
 
   private async handleServerRequest(message: RuntimeMessage): Promise<void> {

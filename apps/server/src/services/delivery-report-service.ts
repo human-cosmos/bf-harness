@@ -16,7 +16,7 @@ export interface DeliveryReport {
   evidence: string[];
   implementation: string;
   modifiedFiles: string[];
-  acceptanceChecklist: Array<{ criterion: string; satisfied: boolean }>;
+  acceptanceChecklist: Array<{ criterion: string }>;
   validationResults: Array<{
     commandId: string;
     command: string[];
@@ -48,9 +48,6 @@ export class DeliveryReportService {
       modifiedFiles: input.diff.files.map((file) => file.path),
       acceptanceChecklist: input.contract.acceptanceCriteria.map((criterion) => ({
         criterion,
-        satisfied:
-          input.validationResults.filter((result) => result.status !== "passed")
-            .length === 0,
       })),
       validationResults: input.validationResults.map((result) => ({
         commandId: result.command.id,

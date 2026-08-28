@@ -9,7 +9,6 @@ export interface AgentEventInput {
   codexItemId?: string;
   method: string;
   payload: unknown;
-  seq: number;
   emittedAtMs?: number;
 }
 
@@ -17,6 +16,13 @@ export class AgentEventRepository {
   constructor(private readonly db: AppDatabase) {}
 
   append(input: AgentEventInput): number {
+    const seqRow = this.db
+      .prepare(
+        "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM agent_events WHERE task_id = ?",
+      )
+      .get(input.taskId) as { next_seq: number | bigint } | undefined;
+    const nextSeq = Number(seqRow?.next_seq ?? 1);
+
     const result = this.db
       .prepare(
         `INSERT INTO agent_events(
@@ -32,7 +38,7 @@ export class AgentEventRepository {
         input.codexItemId ?? null,
         input.method,
         JSON.stringify(redactObject(input.payload)),
-        input.seq,
+        nextSeq,
         input.emittedAtMs ?? null,
         new Date().toISOString(),
       );

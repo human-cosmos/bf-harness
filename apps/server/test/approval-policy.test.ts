@@ -85,4 +85,160 @@ describe("approval policy", () => {
       ).level,
     ).toBe("deny");
   });
+
+  it("auto-allows writes inside an allowed path even when unplanned", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: worktree,
+      allowedPaths: [`${worktree}/src`],
+      forbiddenPaths: [],
+      plannedPaths: [],
+      declaredValidationCommands: [],
+    });
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/src/new-file.ts`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("autoAllow");
+  });
+
+  it("maps relative scope paths against the worktree root", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: worktree,
+      allowedPaths: ["src"],
+      forbiddenPaths: ["node_modules"],
+      plannedPaths: ["src/index.ts"],
+      declaredValidationCommands: [],
+    });
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/node_modules/pkg/index.js`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/src/index.ts`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("autoAllow");
+  });
+
+  it("maps absolute repo paths into the worktree", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: `${worktree}/checkout`,
+      repoRoot: worktree,
+      allowedPaths: [`${worktree}/src`],
+      forbiddenPaths: [`${worktree}/secrets`],
+      plannedPaths: [`${worktree}/src/index.ts`],
+      declaredValidationCommands: [],
+    });
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/checkout/src/index.ts`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("autoAllow");
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/checkout/secrets/token.txt`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("deny");
+  });
+
+  it("does not auto-allow destructive read-command variants", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: worktree,
+      allowedPaths: [],
+      forbiddenPaths: [],
+      plannedPaths: [],
+      declaredValidationCommands: [],
+    });
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "sed -i s/a/b/ file.txt", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "sed -i.bak s/a/b/ file.txt", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "sed -ie s/a/b/ file.txt", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "sed -ni s/a/b/ file.txt", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "sed --in-place=.bak s/a/b/ file.txt",
+          cwd: worktree,
+        },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "find . -name node_modules -delete", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "cat /etc/passwd", cwd: worktree },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+  });
+
+  it("does not widen planned file writes to the whole parent directory", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: worktree,
+      allowedPaths: [],
+      forbiddenPaths: [],
+      plannedPaths: [`${worktree}/src/index.ts`],
+      declaredValidationCommands: [],
+    });
+
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/src/index.ts`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("autoAllow");
+    expect(
+      classifyApprovalRequest(
+        { kind: "file", path: `${worktree}/src/credentials.json`, action: "write" },
+        ctx,
+      ).level,
+    ).toBe("prompt");
+  });
+
+  it("denies read commands running outside the worktree", () => {
+    const ctx = makePolicyContext({
+      worktreeRoot: worktree,
+      allowedPaths: [],
+      forbiddenPaths: [],
+      plannedPaths: [],
+      declaredValidationCommands: [],
+    });
+    expect(
+      classifyApprovalRequest(
+        { kind: "command", command: "cat README.md", cwd: "/tmp/elsewhere" },
+        ctx,
+      ).level,
+    ).toBe("deny");
+  });
 });

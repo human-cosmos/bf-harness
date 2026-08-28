@@ -27,7 +27,7 @@ function titleForPath(pathname: string) {
   if (pathname.includes("/diff")) return "变更与检查";
   if (pathname.includes("/report")) return "验收报告";
   if (pathname.startsWith("/tasks/")) return "任务详情";
-  if (pathname === "/settings") return "系统诊断";
+  if (pathname === "/settings") return "系统设置";
   return "页面不存在";
 }
 

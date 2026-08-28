@@ -205,6 +205,16 @@ export function migrate(db: AppDatabase): void {
         CREATE INDEX idx_plan_approvals_task ON plan_approvals(task_id);
       `,
     },
+    {
+      version: 3,
+      sql: `
+        CREATE TABLE prompt_templates (
+          key TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `,
+    },
   ];
 
   for (const migration of migrations) {

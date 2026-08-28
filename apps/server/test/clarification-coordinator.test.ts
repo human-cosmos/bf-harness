@@ -74,4 +74,20 @@ describe("ClarificationCoordinator", () => {
     await expect(first).resolves.toEqual({});
     await expect(second).resolves.toEqual({});
   });
+
+  it("resolves pending requests when the task is cleared", async () => {
+    const coordinator = new ClarificationCoordinator(new EventBus());
+    const pending = coordinator.request({
+      taskId: "task-1",
+      requestId: 1,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "item-1",
+      questions: [],
+    });
+
+    coordinator.clear("task-1");
+    await expect(pending).resolves.toEqual({});
+    expect(coordinator.get("task-1")).toBeNull();
+  });
 });

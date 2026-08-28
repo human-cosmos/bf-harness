@@ -71,6 +71,7 @@ describe("DeliveryReportService", () => {
 
     expect(report.modifiedFiles).toEqual(["src/a.ts"]);
     expect(report.validationResults).toHaveLength(1);
+    expect(report.acceptanceChecklist).toEqual([{ criterion: "test passes" }]);
   });
 });
 

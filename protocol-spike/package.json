@@ -14,6 +14,6 @@
     "validate": "npm run validate:v1 && npm run validate:v2 && npm run validate:v3 && npm run validate:v4 && npm run validate:v5"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   }
 }

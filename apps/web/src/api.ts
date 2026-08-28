@@ -1,9 +1,14 @@
-import type { PendingClarification, TaskAttention } from "@bugfix-harness/shared";
+import type {
+  PendingClarification,
+  PromptTemplateKey,
+  TaskAttention,
+} from "@bugfix-harness/shared";
 
 export type {
   ClarificationOption,
   ClarificationQuestion,
   PendingClarification,
+  PromptTemplateKey,
   TaskAttention,
 } from "@bugfix-harness/shared";
 
@@ -129,7 +134,7 @@ export interface DeliveryReport {
   evidence: string[];
   implementation: string;
   modifiedFiles: string[];
-  acceptanceChecklist: Array<{ criterion: string; satisfied: boolean }>;
+  acceptanceChecklist: Array<{ criterion: string }>;
   validationResults: Array<{
     commandId: string;
     command: string[];
@@ -185,6 +190,15 @@ export interface WorkflowState {
   report: DeliveryReport | null;
   diff: DiffResult | null;
   jobs: BackgroundJob[];
+}
+
+export interface PromptTemplateSetting {
+  key: PromptTemplateKey;
+  label: string;
+  description: string;
+  placeholders: string[];
+  template: string;
+  defaultTemplate: string;
 }
 
 type RequestOptions = RequestInit & { timeoutMs?: number | null };
@@ -329,4 +343,18 @@ export const api = {
   listEvents: (id: string, limit = 100, afterSeq = 0) =>
     request<any[]>(`/api/tasks/${id}/events?limit=${limit}&afterSeq=${afterSeq}`),
   diagnostics: () => request<Record<string, unknown>>("/api/diagnostics"),
+  getPromptTemplates: () =>
+    request<PromptTemplateSetting[]>("/api/settings/prompts"),
+  savePromptTemplates: (
+    templates: Partial<Record<PromptTemplateKey, string>>,
+  ) =>
+    request<PromptTemplateSetting[]>("/api/settings/prompts", {
+      method: "PUT",
+      body: JSON.stringify({ templates }),
+    }),
+  resetPromptTemplates: (key?: PromptTemplateKey) =>
+    request<PromptTemplateSetting[]>("/api/settings/prompts/reset", {
+      method: "POST",
+      body: JSON.stringify(key ? { key } : {}),
+    }),
 };

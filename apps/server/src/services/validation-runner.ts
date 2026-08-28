@@ -17,10 +17,30 @@ export interface ValidationOutcome {
 
 const MAX_OUTPUT_BYTES = 1_000_000;
 
-function truncateOutput(value: string): string {
-  return value.length > MAX_OUTPUT_BYTES
-    ? `${value.slice(0, MAX_OUTPUT_BYTES)}\n...[output truncated]`
-    : value;
+interface OutputBuffer {
+  append(chunk: string): void;
+  toString(): string;
+}
+
+function createOutputBuffer(maxBytes: number): OutputBuffer {
+  let value = "";
+  let truncated = false;
+
+  return {
+    append(chunk: string) {
+      if (truncated) {
+        return;
+      }
+      value += chunk;
+      if (value.length > maxBytes) {
+        value = value.slice(0, maxBytes);
+        truncated = true;
+      }
+    },
+    toString() {
+      return truncated ? `${value}\n...[output truncated]` : value;
+    },
+  };
 }
 
 export class ValidationRunner {
@@ -50,64 +70,54 @@ export class ValidationRunner {
         windowsHide: true,
       });
 
-      let stdout = "";
-      let stderr = "";
+      const stdout = createOutputBuffer(MAX_OUTPUT_BYTES);
+      const stderr = createOutputBuffer(MAX_OUTPUT_BYTES);
       let settled = false;
+
+      const finish = (outcome: Omit<ValidationOutcome, "command" | "cwd" | "startedAt">) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({ command, cwd, startedAt, ...outcome });
+      };
 
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
-        if (!settled) {
-          settled = true;
-          resolve({
-            command,
-            cwd,
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            exitCode: null,
-            status: "timeout",
-            stdout: truncateOutput(stdout),
-            stderr: truncateOutput(`${stderr}\nValidation timed out`),
-          });
-        }
+        finish({
+          finishedAt: new Date().toISOString(),
+          exitCode: null,
+          status: "timeout",
+          stdout: stdout.toString(),
+          stderr: `${stderr.toString()}\nValidation timed out`,
+        });
       }, command.timeoutSec * 1000);
 
       child.stdout.on("data", (chunk) => {
-        stdout += chunk.toString();
+        stdout.append(chunk.toString());
       });
       child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString();
+        stderr.append(chunk.toString());
       });
       child.on("error", (error) => {
         clearTimeout(timer);
-        if (!settled) {
-          settled = true;
-          resolve({
-            command,
-            cwd,
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            exitCode: null,
-            status: "failed",
-            stdout: truncateOutput(stdout),
-            stderr: truncateOutput(`${stderr}\n${error.message}`),
-          });
-        }
+        finish({
+          finishedAt: new Date().toISOString(),
+          exitCode: null,
+          status: "failed",
+          stdout: stdout.toString(),
+          stderr: `${stderr.toString()}\n${error.message}`,
+        });
       });
       child.on("close", (code) => {
         clearTimeout(timer);
-        if (!settled) {
-          settled = true;
-          resolve({
-            command,
-            cwd,
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            exitCode: code,
-            status: code === 0 ? "passed" : "failed",
-            stdout: truncateOutput(stdout),
-            stderr: truncateOutput(stderr),
-          });
-        }
+        finish({
+          finishedAt: new Date().toISOString(),
+          exitCode: code,
+          status: code === 0 ? "passed" : "failed",
+          stdout: stdout.toString(),
+          stderr: stderr.toString(),
+        });
       });
     });
   }

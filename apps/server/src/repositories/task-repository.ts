@@ -179,15 +179,15 @@ export class TaskRepository {
           run.id,
         ]);
       }
-      deleteChildRows("DELETE FROM workflow_runs WHERE task_id = ?", [taskId]);
-      deleteChildRows("DELETE FROM worktrees WHERE task_id = ?", [taskId]);
-      deleteChildRows("DELETE FROM task_contracts WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM agent_sessions WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM agent_events WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM approval_requests WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM validation_results WHERE task_id = ?", [
         taskId,
       ]);
+      deleteChildRows("DELETE FROM workflow_runs WHERE task_id = ?", [taskId]);
+      deleteChildRows("DELETE FROM worktrees WHERE task_id = ?", [taskId]);
+      deleteChildRows("DELETE FROM task_contracts WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM artifacts WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM delivery_reports WHERE task_id = ?", [taskId]);
       deleteChildRows("DELETE FROM plan_approvals WHERE task_id = ?", [taskId]);

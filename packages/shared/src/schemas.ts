@@ -41,10 +41,10 @@ export const projectSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(120),
   repoPath: absolutePathSchema,
-  instructionSources: z.array(absolutePathSchema).default([]),
+  instructionSources: z.array(z.string().min(1)).default([]),
   validationCommands: z.array(validationCommandSchema).default([]),
-  allowedPaths: z.array(absolutePathSchema).default([]),
-  forbiddenPaths: z.array(absolutePathSchema).default([]),
+  allowedPaths: z.array(z.string().min(1)).default([]),
+  forbiddenPaths: z.array(z.string().min(1)).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -56,10 +56,10 @@ export const createProjectInputSchema = projectSchema
     updatedAt: true,
   })
   .extend({
-    instructionSources: z.array(z.string()).default([]),
+    instructionSources: z.array(z.string().min(1)).default([]),
     validationCommands: z.array(validationCommandSchema).default([]),
-    allowedPaths: z.array(z.string()).default([]),
-    forbiddenPaths: z.array(z.string()).default([]),
+    allowedPaths: z.array(z.string().min(1)).default([]),
+    forbiddenPaths: z.array(z.string().min(1)).default([]),
   });
 
 export const bugfixTaskSchema = z.object({
@@ -103,8 +103,8 @@ export const taskContractSchema = z.object({
   acceptanceCriteria: z.array(z.string()).default([]),
   constraints: z.array(z.string()).default([]),
   scope: z.object({
-    allowedPaths: z.array(z.string()).default([]),
-    forbiddenPaths: z.array(z.string()).default([]),
+    allowedPaths: z.array(z.string().min(1)).default([]),
+    forbiddenPaths: z.array(z.string().min(1)).default([]),
   }),
   validationCommands: z.array(validationCommandSchema).default([]),
 });

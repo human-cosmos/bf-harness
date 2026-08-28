@@ -1,9 +1,30 @@
 const patterns: Array<[string, RegExp]> = [
   ["Bearer token", /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi],
-  ["API key", /\b(?:api[_-]?key|apikey|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9._-]{8,}["']?/gi],
-  ["Password", /\b(?:password|passwd|pwd)\s*[:=]\s*["']?[^\s"']{4,}["']?/gi],
-  ["Private key", /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi],
-  ["AWS secret", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
+  [
+    "Private key",
+    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi,
+  ],
+  [
+    "AWS secret access key",
+    /\b(?:AWS[_-]?SECRET[_-]?ACCESS[_-]?KEY|aws_secret_access_key)\s*[:=]\s*["']?[A-Za-z0-9/+=]{16,}["']?/gi,
+  ],
+  [
+    "AWS access key",
+    /\b(?:AWS[_-]?ACCESS[_-]?KEY[_-]?ID|aws_access_key_id)\s*[:=]\s*["']?[A-Z0-9]{16,}["']?/gi,
+  ],
+  ["AWS secret id", /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
+  [
+    "API key",
+    /\b(?:api[_-]?key|apikey|access[_-]?token|secret[_-]?key)\s*[:=]\s*["']?[A-Za-z0-9._-]{8,}["']?/gi,
+  ],
+  [
+    "Password",
+    /\b(?:password|passwd|pwd)\s*[:=]\s*["']?[^\r\n"']{4,}["']?/gi,
+  ],
+  [
+    "Generic secret",
+    /\b(?:secret|token|credential)s?\s*[:=]\s*["']?[^\r\n"']{4,}["']?/gi,
+  ],
 ];
 
 export function redactSensitive(value: string): string {

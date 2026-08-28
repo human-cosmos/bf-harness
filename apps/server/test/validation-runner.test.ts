@@ -51,4 +51,28 @@ describe("ValidationRunner", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  it("truncates oversized output while streaming", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bugfix-validation-"));
+    try {
+      const result = await new ValidationRunner().run(
+        {
+          id: "big",
+          label: "big",
+          command: [
+            "node",
+            "-e",
+            "process.stdout.write('x'.repeat(2_000_000));",
+          ],
+          timeoutSec: 10,
+        },
+        cwd,
+      );
+      expect(result.status).toBe("passed");
+      expect(result.stdout).toContain("...[output truncated]");
+      expect(result.stdout.length).toBeLessThanOrEqual(1_000_000 + 30);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });

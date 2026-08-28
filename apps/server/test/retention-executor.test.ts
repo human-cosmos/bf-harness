@@ -35,7 +35,6 @@ describe("RetentionExecutor", () => {
         taskId: task.id,
         method: "item/agentMessage/delta",
         payload: { seq },
-        seq,
       });
     }
 
@@ -43,5 +42,35 @@ describe("RetentionExecutor", () => {
     expect(executor.pruneTaskEvents(task.id)).toBe(2);
     expect(events.countByTask(task.id)).toBe(10);
     expect(events.listByTask(task.id, { limit: 1 })[0].seq).toBe(3);
+  });
+
+  it("generates a unique per-task sequence without caller input", () => {
+    const db = openDatabase(":memory:");
+    const projects = new ProjectRepository(db);
+    const tasks = new TaskRepository(db);
+    const events = new AgentEventRepository(db);
+    const project = projects.create({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: [],
+      validationCommands: [],
+      allowedPaths: [],
+      forbiddenPaths: [],
+    });
+    const task = tasks.create({
+      projectId: project.id,
+      title: "fix",
+      bugDescription: "broken",
+      observedBehavior: "error",
+      expectedBehavior: "works",
+      relatedFiles: [],
+      acceptanceCriteria: [],
+      constraints: [],
+    });
+
+    events.append({ taskId: task.id, method: "a", payload: {} });
+    events.append({ taskId: task.id, method: "b", payload: {} });
+    const rows = events.listByTask(task.id, { limit: 10 });
+    expect(rows.map((row) => row.seq)).toEqual([1, 2]);
   });
 });

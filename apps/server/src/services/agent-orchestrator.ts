@@ -13,6 +13,7 @@ import { AgentEventRepository } from "../repositories/agent-event-repository.js"
 import { PlanApprovalRepository } from "../repositories/plan-approval-repository.js";
 import { ProjectRepository } from "../repositories/project-repository.js";
 import { TaskRepository } from "../repositories/task-repository.js";
+import { PromptTemplateRepository } from "../repositories/prompt-template-repository.js";
 import { WorktreeRepository } from "../repositories/worktree-repository.js";
 import { AppServerRuntime } from "./app-server-runtime.js";
 import { ExecutionService } from "./execution-service.js";
@@ -20,6 +21,7 @@ import { WorkflowService } from "./workflow-service.js";
 import { RuntimeEventRecorder } from "./runtime-event-recorder.js";
 import { ClarificationCoordinator } from "./clarification-coordinator.js";
 import type { ApprovalRequest } from "./approval-policy.js";
+import { loadInstructionSources } from "./instruction-source-loader.js";
 
 function stripCodeFences(text: string): string {
   return text
@@ -27,6 +29,38 @@ function stripCodeFences(text: string): string {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+}
+
+export function buildApprovalResponse(
+  method: string,
+  decision: "accept" | "decline" | "cancel",
+  params: Record<string, unknown>,
+): unknown {
+  if (
+    method === "item/commandExecution/requestApproval" ||
+    method === "item/fileChange/requestApproval"
+  ) {
+    return { decision };
+  }
+
+  if (method === "item/permissions/requestApproval") {
+    if (decision === "accept") {
+      return { permissions: params.permissions ?? {}, scope: "turn" };
+    }
+    return { permissions: {}, scope: "turn" };
+  }
+
+  if (method === "execCommandApproval" || method === "applyPatchApproval") {
+    if (decision === "accept") {
+      return { decision: "approved" };
+    }
+    if (decision === "cancel") {
+      return { decision: "abort" };
+    }
+    return { decision: { denied: { rejection: "declined by reviewer" } } };
+  }
+
+  return { decision };
 }
 
 export class AgentOrchestrator {
@@ -40,6 +74,7 @@ export class AgentOrchestrator {
     private readonly events: AgentEventRepository,
     private readonly plans: PlanApprovalRepository,
     private readonly codexBin: string,
+    private readonly promptTemplates: PromptTemplateRepository,
     private readonly prepareWorktree: (taskId: string) => Promise<Worktree>,
     private readonly clarifications: ClarificationCoordinator,
     private readonly analysisTimeoutMs: number,
@@ -105,6 +140,12 @@ export class AgentOrchestrator {
         throw new Error("Worktree not ready");
       }
 
+      const developerInstructions = await loadInstructionSources({
+        repoPath: project.repoPath,
+        worktreePath: worktree.path,
+        instructionSources: project.instructionSources,
+      });
+
     const runtime = new AppServerRuntime({
       codexBin: this.codexBin,
       cwd: worktree.path,
@@ -148,10 +189,19 @@ export class AgentOrchestrator {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         ephemeral: false,
+        developerInstructions: developerInstructions || undefined,
       });
       await runtime.startTurn({
         threadId: runtime.currentThreadId!,
-        input: [{ type: "text", text: buildAnalyzePrompt(contract) }],
+        input: [
+          {
+            type: "text",
+            text: buildAnalyzePrompt(
+              contract,
+              this.promptTemplates.get("analyze"),
+            ),
+          },
+        ],
         outputSchema: planOutputSchema,
         planMode: true,
       });
@@ -199,6 +249,16 @@ export class AgentOrchestrator {
       throw new Error("No analysis session");
     }
 
+    const project = this.projects.get(task.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    const developerInstructions = await loadInstructionSources({
+      repoPath: project.repoPath,
+      worktreePath: worktree.path,
+      instructionSources: project.instructionSources,
+    });
+
     const runtime = new AppServerRuntime({
       codexBin: this.codexBin,
       cwd: worktree.path,
@@ -216,12 +276,35 @@ export class AgentOrchestrator {
       let request: ApprovalRequest | null = null;
 
       if (method === "item/commandExecution/requestApproval") {
+        const networkContext = params.networkApprovalContext as
+          | { host?: string | null }
+          | null
+          | undefined;
+        if (networkContext?.host) {
+          request = { kind: "network", host: String(networkContext.host) };
+        } else {
+          request = {
+            kind: "command",
+            command: String(params.command ?? ""),
+            cwd: String(params.cwd ?? worktree.path),
+          };
+        }
+      } else if (method === "execCommandApproval") {
+        const command = Array.isArray(params.command)
+          ? params.command.map((item) => String(item)).join(" ")
+          : String(params.command ?? "");
         request = {
           kind: "command",
-          command: String(params.command ?? ""),
+          command,
           cwd: String(params.cwd ?? worktree.path),
         };
       } else if (method === "item/fileChange/requestApproval") {
+        request = {
+          kind: "file",
+          path: String(params.grantRoot ?? worktree.path),
+          action: "write",
+        };
+      } else if (method === "applyPatchApproval") {
         request = {
           kind: "file",
           path: String(params.grantRoot ?? worktree.path),
@@ -231,11 +314,7 @@ export class AgentOrchestrator {
         request = {
           kind: "permissions",
           reason: params.reason ? String(params.reason) : undefined,
-        };
-      } else if (method === "item/network/requestApproval") {
-        request = {
-          kind: "network",
-          host: params.host ? String(params.host) : undefined,
+          permissions: params.permissions,
         };
       }
 
@@ -248,7 +327,7 @@ export class AgentOrchestrator {
         request,
         message.id,
       );
-      return { decision: result.decision };
+      return buildApprovalResponse(method, result.decision, params);
     };
 
     try {
@@ -260,6 +339,7 @@ export class AgentOrchestrator {
       await runtime.resumeThread(session.codexThreadId, {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
+        developerInstructions: developerInstructions || undefined,
       });
       await runtime.startTurn({
         threadId: session.codexThreadId,
@@ -270,6 +350,7 @@ export class AgentOrchestrator {
               contract,
               planApproval.content,
               validationFeedback,
+              this.promptTemplates.get("implement"),
             ),
           },
         ],
@@ -330,6 +411,16 @@ export class AgentOrchestrator {
       throw new Error("No analysis session");
     }
 
+    const project = this.projects.get(task.projectId);
+    if (!project) {
+      throw new Error("Project not found");
+    }
+    const developerInstructions = await loadInstructionSources({
+      repoPath: project.repoPath,
+      worktreePath: worktree.path,
+      instructionSources: project.instructionSources,
+    });
+
     const runtime = new AppServerRuntime({
       codexBin: this.codexBin,
       cwd: worktree.path,
@@ -347,6 +438,7 @@ export class AgentOrchestrator {
       await runtime.resumeThread(session.codexThreadId, {
         approvalPolicy: "never",
         approvalsReviewer: "auto-review",
+        developerInstructions: developerInstructions || undefined,
       });
       await runtime.startTurn({
         threadId: session.codexThreadId,
@@ -357,6 +449,7 @@ export class AgentOrchestrator {
               contract,
               planApproval.content,
               question.trim(),
+              this.promptTemplates.get("planQuestion"),
             ),
           },
         ],
