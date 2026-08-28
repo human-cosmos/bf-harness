@@ -8,6 +8,7 @@ import {
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "../db.js";
 import { ProjectRepository } from "../repositories/project-repository.js";
 import { TaskRepository } from "../repositories/task-repository.js";
@@ -33,6 +34,23 @@ interface AnalysisRun {
   status: "RUNNING" | "SUCCEEDED" | "FAILED";
   error?: string;
   plan?: RepairPlan;
+}
+
+export type BackgroundJobKind =
+  | "implement"
+  | "continue-fix"
+  | "validate"
+  | "report";
+
+export interface BackgroundJob {
+  id: string;
+  taskId: string;
+  kind: BackgroundJobKind;
+  status: "running" | "succeeded" | "failed";
+  message: string;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
 }
 
 function fallbackTaskTitle(description: string): string {
@@ -70,6 +88,7 @@ export class BugfixService {
   private readonly codexBin: string;
   private readonly analysisTimeoutMs: number;
   private readonly analysisRuns = new Map<string, AnalysisRun>();
+  private readonly backgroundJobs = new Map<string, BackgroundJob>();
 
   constructor(options: BugfixServiceOptions) {
     this.events = options.eventBus ?? new EventBus();
@@ -147,6 +166,7 @@ export class BugfixService {
     const analyzableStatuses: TaskStatus[] = [
       "DRAFT",
       "PREPARING_WORKSPACE",
+      "ANALYZING",
     ];
     if (!analyzableStatuses.includes(task.status)) {
       throw new Error(`Cannot start analysis from status ${task.status}`);
@@ -293,6 +313,147 @@ export class BugfixService {
       pendingApprovals,
       validation,
     };
+  }
+
+  async getWorkflowState(taskId: string) {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    const project = this.projects.get(task.projectId);
+    const contract = this.tasks.getContract(taskId);
+    const worktree = this.worktrees.getByTaskId(taskId);
+    const planApproval = this.workflow.plans.getLatest(taskId);
+    const report = this.execution.reports.getByTask(taskId);
+    const pendingApprovals = this.execution.approvals
+      .listByTask(taskId)
+      .filter((approval) => !approval.decision);
+
+    let validations: Awaited<ReturnType<typeof this.execution.listValidations>>;
+    try {
+      validations = this.execution.listValidations(taskId);
+    } catch {
+      validations = [];
+    }
+
+    let diff: Awaited<ReturnType<typeof this.execution.generateDiff>> | null = null;
+    try {
+      diff = await this.execution.generateDiff(taskId);
+    } catch {
+      diff = null;
+    }
+
+    return {
+      task,
+      project: project
+        ? {
+            id: project.id,
+            name: project.name,
+            repoPath: project.repoPath,
+          }
+        : null,
+      contract,
+      worktree: worktree
+        ? {
+            id: worktree.id,
+            path: worktree.path,
+            baseCommit: worktree.baseCommit,
+            branch: worktree.branch,
+            status: worktree.status,
+          }
+        : null,
+      attention: this.getAttention(taskId),
+      planApproval,
+      pendingApprovals,
+      validations,
+      report,
+      diff,
+      jobs: this.getTaskJobs(taskId),
+    };
+  }
+
+  startBackgroundJob(
+    taskId: string,
+    kind: BackgroundJobKind,
+    message: string,
+    run: () => Promise<unknown>,
+  ): BackgroundJob {
+    const job: BackgroundJob = {
+      id: randomUUID(),
+      taskId,
+      kind,
+      status: "running",
+      message,
+      startedAt: new Date().toISOString(),
+    };
+    this.backgroundJobs.set(job.id, job);
+
+    void run()
+      .then(() => {
+        job.status = "succeeded";
+        job.message = `${message}完成`;
+        job.finishedAt = new Date().toISOString();
+        this.backgroundJobs.set(job.id, { ...job });
+        this.events.publish({
+          type: "job.completed",
+          taskId,
+          payload: { job },
+        });
+      })
+      .catch((error) => {
+        job.status = "failed";
+        job.message = `${message}失败`;
+        job.finishedAt = new Date().toISOString();
+        job.error = (error as Error).message;
+        this.backgroundJobs.set(job.id, { ...job });
+        this.events.publish({
+          type: "job.failed",
+          taskId,
+          payload: { job },
+        });
+      });
+
+    this.events.publish({
+      type: "job.started",
+      taskId,
+      payload: { job },
+    });
+    return job;
+  }
+
+  getJob(jobId: string) {
+    return this.backgroundJobs.get(jobId) ?? null;
+  }
+
+  getTaskJobs(taskId: string) {
+    return [...this.backgroundJobs.values()]
+      .filter((job) => job.taskId === taskId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  }
+
+  startImplementJob(taskId: string) {
+    return this.startBackgroundJob(taskId, "implement", "开始实施", () =>
+      this.agent.implement(taskId),
+    );
+  }
+
+  startContinueFixJob(taskId: string) {
+    return this.startBackgroundJob(taskId, "continue-fix", "继续修复", () =>
+      this.continueFix(taskId),
+    );
+  }
+
+  startValidationJob(taskId: string) {
+    return this.startBackgroundJob(taskId, "validate", "运行检查", () =>
+      this.execution.runValidations(taskId),
+    );
+  }
+
+  startReportJob(taskId: string) {
+    return this.startBackgroundJob(taskId, "report", "生成验收报告", () =>
+      this.execution.buildReport(taskId),
+    );
   }
 
   askPlanQuestion(taskId: string, question: string) {

@@ -71,7 +71,8 @@ test("complete AI bugfix main flow through the web UI", async ({
   await expect(
     page.getByRole("heading", { name: "修复计划", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "批准" }).click();
+  await page.getByRole("button", { name: "仅批准" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "仅批准" }).click();
 
   await expect
     .poll(async () => {
@@ -111,7 +112,9 @@ test("complete AI bugfix main flow through the web UI", async ({
 
   await page.goto(`/tasks/${taskId}/report`);
   await page.getByRole("button", { name: "生成验收报告" }).click();
-  await expect(page.getByRole("button", { name: "通过" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "通过" })).toBeEnabled({
+    timeout: 120_000,
+  });
   await page.getByRole("button", { name: "通过" }).click();
 
   await expect

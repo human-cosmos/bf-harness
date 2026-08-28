@@ -19,6 +19,7 @@ import { ExecutionService } from "./execution-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { RuntimeEventRecorder } from "./runtime-event-recorder.js";
 import { ClarificationCoordinator } from "./clarification-coordinator.js";
+import type { ApprovalRequest } from "./approval-policy.js";
 
 function stripCodeFences(text: string): string {
   return text
@@ -86,7 +87,9 @@ export class AgentOrchestrator {
     if (task.status === "PREPARING_WORKSPACE") {
       await this.prepareWorktree(taskId);
     }
-    this.workflow.transitionTask(taskId, "ANALYZING");
+    if (task.status !== "ANALYZING") {
+      this.workflow.transitionTask(taskId, "ANALYZING");
+    }
 
     try {
       const project = this.projects.get(task.projectId);
@@ -206,6 +209,47 @@ export class AgentOrchestrator {
       this.events,
       taskId,
     ).attach(runtime);
+
+    runtime.onServerRequest = async (message) => {
+      const params = (message.params ?? {}) as Record<string, unknown>;
+      const method = message.method ?? "";
+      let request: ApprovalRequest | null = null;
+
+      if (method === "item/commandExecution/requestApproval") {
+        request = {
+          kind: "command",
+          command: String(params.command ?? ""),
+          cwd: String(params.cwd ?? worktree.path),
+        };
+      } else if (method === "item/fileChange/requestApproval") {
+        request = {
+          kind: "file",
+          path: String(params.grantRoot ?? worktree.path),
+          action: "write",
+        };
+      } else if (method === "item/permissions/requestApproval") {
+        request = {
+          kind: "permissions",
+          reason: params.reason ? String(params.reason) : undefined,
+        };
+      } else if (method === "item/network/requestApproval") {
+        request = {
+          kind: "network",
+          host: params.host ? String(params.host) : undefined,
+        };
+      }
+
+      if (!request) {
+        return undefined;
+      }
+
+      const result = await this.execution.requestApprovalDecision(
+        taskId,
+        request,
+        message.id,
+      );
+      return { decision: result.decision };
+    };
 
     try {
       await runtime.initialize({

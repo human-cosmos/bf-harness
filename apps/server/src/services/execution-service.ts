@@ -23,6 +23,10 @@ export class ExecutionService {
   readonly diffService: DiffService;
   readonly validationRunner: ValidationRunner;
   readonly reportService: DeliveryReportService;
+  private readonly approvalWaiters = new Map<
+    string,
+    (decision: "accept" | "decline" | "cancel") => void
+  >();
 
   constructor(
     private readonly db: AppDatabase,
@@ -90,6 +94,61 @@ export class ExecutionService {
     });
   }
 
+  async requestApprovalDecision(
+    taskId: string,
+    request: ApprovalRequest,
+    codexRequestId?: number,
+  ): Promise<{ decision: "accept" | "decline" | "cancel"; approvalId: string }> {
+    const task = this.requireTask(taskId);
+    const worktree = this.requireWorktree(taskId);
+    const project = this.requireProject(task.projectId);
+    const plan = this.plans.getLatest(taskId);
+
+    const decision = classifyApprovalRequest(
+      request,
+      makePolicyContext({
+        worktreeRoot: worktree.path,
+        allowedPaths: project.allowedPaths,
+        forbiddenPaths: project.forbiddenPaths,
+        plannedPaths: plan?.status === "APPROVED" ? plan.content.proposedFiles : [],
+        declaredValidationCommands: project.validationCommands.map(
+          (command) => ({ command: command.command }),
+        ),
+      }),
+    );
+
+    const approval = this.approvals.create({
+      taskId,
+      codexRequestId,
+      method:
+        request.kind === "command"
+          ? "item/commandExecution/requestApproval"
+          : request.kind === "file"
+            ? "item/fileChange/requestApproval"
+            : request.kind === "network"
+              ? "item/network/requestApproval"
+              : "item/permissions/requestApproval",
+      payload: request,
+      riskLevel: decision.level,
+    });
+
+    if (decision.level === "autoAllow") {
+      this.approvals.decide(approval.id, "accept");
+      return { decision: "accept", approvalId: approval.id };
+    }
+
+    if (decision.level === "deny") {
+      this.approvals.decide(approval.id, "decline");
+      return { decision: "decline", approvalId: approval.id };
+    }
+
+    return new Promise((resolve) => {
+      this.approvalWaiters.set(approval.id, (resolvedDecision) => {
+        resolve({ decision: resolvedDecision, approvalId: approval.id });
+      });
+    });
+  }
+
   decideApproval(
     taskId: string,
     approvalId: string,
@@ -97,6 +156,11 @@ export class ExecutionService {
   ) {
     this.requireTask(taskId);
     this.approvals.decide(approvalId, decision);
+    const waiter = this.approvalWaiters.get(approvalId);
+    if (waiter) {
+      this.approvalWaiters.delete(approvalId);
+      waiter(decision);
+    }
     return { approvalId, decision };
   }
 
@@ -109,6 +173,11 @@ export class ExecutionService {
     const decided = [];
     for (const approvalId of approvalIds) {
       this.approvals.decide(approvalId, decision);
+      const waiter = this.approvalWaiters.get(approvalId);
+      if (waiter) {
+        this.approvalWaiters.delete(approvalId);
+        waiter(decision);
+      }
       decided.push({ approvalId, decision });
     }
     return { decided };

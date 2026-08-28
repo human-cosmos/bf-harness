@@ -201,6 +201,26 @@ export async function buildApp(service: BugfixService) {
     return { task, contract };
   });
 
+  app.get("/api/tasks/:id/workflow-state", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.getWorkflowState(id);
+    } catch (error) {
+      return reply.code(400).send({
+        error: (error as Error).message,
+      });
+    }
+  });
+
+  app.get("/api/tasks/:id/jobs/:jobId", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const job = service.getJob(jobId);
+    if (!job) {
+      return reply.code(404).send({ error: "Job not found" });
+    }
+    return job;
+  });
+
   app.post("/api/tasks/:id/prepare-worktree", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
@@ -399,7 +419,8 @@ export async function buildApp(service: BugfixService) {
   app.post("/api/tasks/:id/validate", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      return await service.execution.runValidations(id);
+      const job = service.startValidationJob(id);
+      return reply.code(202).send({ jobId: job.id, job });
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }
@@ -417,7 +438,8 @@ export async function buildApp(service: BugfixService) {
   app.post("/api/tasks/:id/continue-fix", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      return { output: await service.continueFix(id) };
+      const job = service.startContinueFixJob(id);
+      return reply.code(202).send({ jobId: job.id, job });
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }
@@ -439,7 +461,8 @@ export async function buildApp(service: BugfixService) {
   app.post("/api/tasks/:id/report", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      return await service.execution.buildReport(id);
+      const job = service.startReportJob(id);
+      return reply.code(202).send({ jobId: job.id, job });
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }
@@ -499,7 +522,8 @@ export async function buildApp(service: BugfixService) {
   app.post("/api/tasks/:id/implement", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
-      return { output: await service.agent.implement(id) };
+      const job = service.startImplementJob(id);
+      return reply.code(202).send({ jobId: job.id, job });
     } catch (error) {
       return reply.code(400).send({ error: (error as Error).message });
     }

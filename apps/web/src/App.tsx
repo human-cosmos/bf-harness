@@ -7,6 +7,7 @@ import {
   Layout,
   NewProjectPage,
   NewTaskPage,
+  PendingPage,
   PlanPage,
   ProjectPage,
   ProjectsPage,
@@ -18,12 +19,14 @@ import {
 function titleForPath(pathname: string) {
   if (pathname === "/") return "本地项目";
   if (pathname === "/projects/new") return "添加项目";
+  if (pathname === "/pending") return "待办中心";
   if (pathname.startsWith("/projects/")) return "项目任务";
   if (pathname === "/tasks/new") return "新建任务";
   if (pathname.includes("/plan")) return "修复计划";
   if (pathname.includes("/approvals")) return "操作审批";
   if (pathname.includes("/diff")) return "变更与检查";
   if (pathname.includes("/report")) return "验收报告";
+  if (pathname.startsWith("/tasks/")) return "任务详情";
   if (pathname === "/settings") return "系统诊断";
   return "页面不存在";
 }
@@ -60,6 +63,7 @@ export function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route index element={<ProjectsPage />} />
+          <Route path="/pending" element={<PendingPage />} />
           <Route path="/projects/new" element={<NewProjectPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
           <Route path="/tasks/new" element={<NewTaskPage />} />

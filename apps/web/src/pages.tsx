@@ -29,23 +29,16 @@ import {
   type ValidationOutcome,
 } from "./api.js";
 import { useHarnessEvents } from "./use-harness-events.js";
+import { useWorkflowState } from "./use-workflow-state.js";
+import { TaskShell } from "./TaskShell.js";
+import {
+  currentStepForStatus,
+  nextActionForState,
+  STATUS_META,
+  WORKFLOW_STEPS,
+} from "./workflow-model.js";
 
 type BadgeTone = "neutral" | "active" | "success" | "warning" | "danger";
-
-const STATUS_META: Record<string, { label: string; tone: BadgeTone }> = {
-  DRAFT: { label: "草稿", tone: "neutral" },
-  PREPARING_WORKSPACE: { label: "准备中", tone: "active" },
-  ANALYZING: { label: "分析中", tone: "active" },
-  WAITING_FOR_PLAN_APPROVAL: { label: "待确认计划", tone: "warning" },
-  IMPLEMENTING: { label: "待实施", tone: "active" },
-  VALIDATING: { label: "验证中", tone: "active" },
-  WAITING_FOR_ACCEPTANCE: { label: "待验收", tone: "warning" },
-  ACCEPTED: { label: "已验收", tone: "success" },
-  BLOCKED: { label: "受阻", tone: "danger" },
-  FAILED: { label: "失败", tone: "danger" },
-  CANCELLED: { label: "已取消", tone: "neutral" },
-  REJECTED: { label: "已拒绝", tone: "danger" },
-};
 
 const DEFAULT_PROJECT_FIELDS = {
   instructionSources: "AGENTS.md",
@@ -82,7 +75,9 @@ function Badge({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const meta = STATUS_META[status] ?? { label: status, tone: "neutral" as BadgeTone };
+  const meta =
+    (STATUS_META as Record<string, { label: string; tone: BadgeTone }>)[status] ??
+    { label: status, tone: "neutral" as BadgeTone };
   return <Badge tone={meta.tone}>{meta.label}</Badge>;
 }
 
@@ -313,10 +308,9 @@ function ClarificationPanel({
       const answers: Record<string, { answers: string[] }> = {};
       for (const question of clarification.questions) {
         const value = String(values[question.id] ?? "").trim();
-        if (!value) {
-          throw new Error(`请先回答：${question.question}`);
+        if (value) {
+          answers[question.id] = { answers: [value] };
         }
-        answers[question.id] = { answers: [value] };
       }
       await api.answerClarification(clarification.taskId, answers);
       onAnswered();
@@ -326,6 +320,10 @@ function ClarificationPanel({
       setBusy(false);
     }
   }
+
+  const answeredCount = clarification.questions.filter((question) =>
+    String(values[question.id] ?? "").trim(),
+  ).length;
 
   function renderQuestion(question: ClarificationQuestion) {
     const value = values[question.id] ?? "";
@@ -402,6 +400,12 @@ function ClarificationPanel({
       <p className="muted">
         Codex 在分析时遇到不明确的信息，请根据实际情况补充后继续。
       </p>
+      <div className="clarification-progress">
+        <span>
+          已填写 {answeredCount} / {clarification.questions.length}
+        </span>
+        <span className="muted">未填写的项会交给 Codex 继续推断</span>
+      </div>
       {clarification.questions.map(renderQuestion)}
       <ErrorNotice message={error} />
       <div className="form-actions">
@@ -411,7 +415,7 @@ function ClarificationPanel({
           disabled={busy}
           onClick={() => submit(false)}
         >
-          {busy ? "提交中..." : "提交并继续分析"}
+          {busy ? "提交中..." : "提交并继续分析（空项按跳过）"}
         </button>
         <button
           type="button"
@@ -684,6 +688,12 @@ function eventSummary(event: { type: string; payload?: unknown }): string {
       return "操作审批已完成";
     case "validation.completed":
       return "自动检查已完成";
+    case "job.started":
+      return "后台任务已开始";
+    case "job.completed":
+      return "后台任务已完成";
+    case "job.failed":
+      return "后台任务失败";
     default:
       return event.type;
   }
@@ -737,6 +747,12 @@ export function Layout() {
               className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
             >
               项目
+            </NavLink>
+            <NavLink
+              to="/pending"
+              className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+            >
+              待办
             </NavLink>
             <NavLink
               to="/tasks/new"
@@ -841,6 +857,15 @@ export function ProjectsPage() {
                   </span>
                 </div>
                 <div className="actions">
+                  <Link to={`/projects/${project.id}`} className="btn">
+                    查看项目
+                  </Link>
+                  <Link
+                    to={`/tasks/new?projectId=${project.id}`}
+                    className="btn"
+                  >
+                    新建任务
+                  </Link>
                   <button
                     type="button"
                     className="btn-danger"
@@ -852,6 +877,135 @@ export function ProjectsPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+export function PendingPage() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<BugfixTask[]>([]);
+  const [attentions, setAttentions] = useState<Record<string, TaskAttention>>({});
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+
+    async function load() {
+      try {
+        const projectList = await api.listProjects();
+        const [taskList, summaries] = await Promise.all([
+          api.listTasks(),
+          Promise.all(
+            projectList.map((project) =>
+              api
+                .listTaskAttentionSummaries(project.id)
+                .catch(() => ({}) as Record<string, TaskAttention>),
+            ),
+          ),
+        ]);
+
+        if (!cancelled) {
+          setProjects(projectList);
+          setTasks(taskList);
+          setAttentions(Object.assign({}, ...summaries));
+          setError("");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError((err as Error).message);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const projectName = (projectId: string) =>
+    projects.find((project) => project.id === projectId)?.name ?? projectId.slice(0, 8);
+
+  const pendingTasks = useMemo(
+    () =>
+      tasks.filter((task) => {
+        const attention = attentions[task.id];
+        return Boolean(
+          attention &&
+            (attention.clarification ||
+              attention.planApproval?.status === "PENDING" ||
+              attention.pendingApprovals > 0 ||
+              attention.validation.failed + attention.validation.timeout > 0 ||
+              task.status === "WAITING_FOR_ACCEPTANCE"),
+        );
+      }),
+    [attentions, tasks],
+  );
+
+  function actionForTask(task: BugfixTask): { label: string; href: string } {
+    const attention = attentions[task.id];
+    if (attention?.clarification) {
+      return { label: "补充信息", href: `/tasks/${task.id}` };
+    }
+    if (attention?.planApproval?.status === "PENDING") {
+      return { label: "确认计划", href: `/tasks/${task.id}/plan` };
+    }
+    if (attention && attention.pendingApprovals > 0) {
+      return { label: `处理 ${attention.pendingApprovals} 项审批`, href: `/tasks/${task.id}/approvals` };
+    }
+    if (
+      attention &&
+      attention.validation.failed + attention.validation.timeout > 0
+    ) {
+      return { label: "处理失败检查", href: `/tasks/${task.id}/diff` };
+    }
+    if (task.status === "WAITING_FOR_ACCEPTANCE") {
+      return { label: "验收结果", href: `/tasks/${task.id}/report` };
+    }
+    return { label: "查看任务", href: `/tasks/${task.id}` };
+  }
+
+  return (
+    <section>
+      <PageHeader kicker="工作台" title="待办中心" />
+      <ErrorNotice message={error} />
+      {loading ? (
+        <Loading />
+      ) : pendingTasks.length === 0 ? (
+        <div className="card empty-state">
+          <p className="muted">当前没有需要你处理的任务。</p>
+        </div>
+      ) : (
+        <div className="card">
+          <div className="list">
+            {pendingTasks.map((task) => {
+              const action = actionForTask(task);
+              return (
+                <div key={task.id} className="list-item">
+                  <div className="list-item-main">
+                    <span className="list-item-meta">{projectName(task.projectId)}</span>
+                    <Link to={`/tasks/${task.id}`} className="list-item-title">
+                      {task.title}
+                    </Link>
+                    <span className="list-item-meta">
+                      {formatDate(task.updatedAt)} · <StatusBadge status={task.status} />
+                    </span>
+                  </div>
+                  <Link to={action.href} className="btn btn-primary">
+                    {action.label}
+                  </Link>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -960,8 +1114,13 @@ export function NewProjectPage() {
       <PageHeader kicker="项目" title="添加项目" />
       <form className="form" onSubmit={submit}>
         <div className="card form-card">
+          <div className="form-section">
+            <div className="form-section-heading">
+              <h2>1. 项目信息</h2>
+              <span className="field-hint">选择要修复的本地 Git 仓库</span>
+            </div>
           <label className="field">
-            名称
+            名称 <span className="required-mark">必填</span>
             <input
               name="name"
               required
@@ -1003,6 +1162,12 @@ export function NewProjectPage() {
               defaultValue={DEFAULT_PROJECT_FIELDS.instructionSources}
             />
           </label>
+          </div>
+          <div className="form-section">
+            <div className="form-section-heading">
+              <h2>2. 验证命令</h2>
+              <span className="field-hint">用于修复后自动检查是否通过</span>
+            </div>
           <div className="field">
             <div className="field-heading-row">
               <span>验证命令</span>
@@ -1062,6 +1227,12 @@ export function NewProjectPage() {
               </div>
             ))}
           </div>
+          </div>
+          <div className="form-section">
+            <div className="form-section-heading">
+              <h2>3. 修改范围</h2>
+              <span className="field-hint">限制 Codex 可以修改哪些文件</span>
+            </div>
           <label className="field">
             允许修改路径（每行一个）
             <textarea
@@ -1078,6 +1249,7 @@ export function NewProjectPage() {
               defaultValue={DEFAULT_PROJECT_FIELDS.forbiddenPaths}
             />
           </label>
+          </div>
         </div>
         <ErrorNotice message={error} />
         <div className="form-actions">
@@ -1096,6 +1268,7 @@ export function ProjectPage() {
   const [attentions, setAttentions] = useState<Record<string, TaskAttention>>({});
   const [project, setProject] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -1132,15 +1305,59 @@ export function ProjectPage() {
 
   const filteredTasks = useMemo(() => {
     const normalized = query.trim().toLowerCase();
-    if (!normalized) return tasks;
+    const withAttention = (task: BugfixTask) => {
+      const attention = attentions[task.id];
+      return Boolean(
+        attention &&
+          (attention.clarification ||
+            attention.planApproval?.status === "PENDING" ||
+            attention.pendingApprovals > 0 ||
+            attention.validation.failed + attention.validation.timeout > 0),
+      );
+    };
+
     return tasks.filter((task) => {
       const status = STATUS_META[task.status]?.label ?? task.status;
-      return [task.title, task.id, status]
+      const matchesQuery =
+        !normalized ||
+        [task.title, task.id, status]
         .join(" ")
         .toLowerCase()
         .includes(normalized);
+
+      if (!matchesQuery) return false;
+      if (filter === "pending") return withAttention(task);
+      if (filter === "active") {
+        return [
+          "PREPARING_WORKSPACE",
+          "ANALYZING",
+          "WAITING_FOR_PLAN_APPROVAL",
+          "IMPLEMENTING",
+          "VALIDATING",
+          "WAITING_FOR_ACCEPTANCE",
+        ].includes(task.status);
+      }
+      if (filter === "done") {
+        return ["ACCEPTED", "REJECTED", "CANCELLED", "FAILED"].includes(task.status);
+      }
+      return true;
     });
-  }, [query, tasks]);
+  }, [attentions, filter, query, tasks]);
+
+  const pendingCount = useMemo(
+    () =>
+      tasks.filter((task) => {
+        const attention = attentions[task.id];
+        return Boolean(
+          attention &&
+            (attention.clarification ||
+              attention.planApproval?.status === "PENDING" ||
+              attention.pendingApprovals > 0 ||
+              attention.validation.failed + attention.validation.timeout > 0),
+        );
+      }).length,
+    [attentions, tasks],
+  );
 
   return (
     <section>
@@ -1161,6 +1378,36 @@ export function ProjectPage() {
       ) : null}
       <ErrorNotice message={error} />
       <div className="card card-compact list-toolbar">
+        <div className="filter-tabs" role="tablist" aria-label="任务状态筛选">
+          <button
+            type="button"
+            className={filter === "all" ? "active" : ""}
+            onClick={() => setFilter("all")}
+          >
+            全部
+          </button>
+          <button
+            type="button"
+            className={filter === "pending" ? "active" : ""}
+            onClick={() => setFilter("pending")}
+          >
+            待处理 {pendingCount > 0 ? `(${pendingCount})` : ""}
+          </button>
+          <button
+            type="button"
+            className={filter === "active" ? "active" : ""}
+            onClick={() => setFilter("active")}
+          >
+            进行中
+          </button>
+          <button
+            type="button"
+            className={filter === "done" ? "active" : ""}
+            onClick={() => setFilter("done")}
+          >
+            已结束
+          </button>
+        </div>
         <label className="field">
           搜索任务
           <input
@@ -1175,6 +1422,13 @@ export function ProjectPage() {
       ) : filteredTasks.length === 0 ? (
         <div className="card empty-state">
           <p className="muted">{query ? "没有匹配的任务。" : "暂无任务。"}</p>
+          {!query && (
+            <div className="actions">
+              <Link to={`/tasks/new?projectId=${id}`} className="btn btn-primary">
+                新建 Bugfix 任务
+              </Link>
+            </div>
+          )}
         </div>
       ) : (
         <div className="card">
@@ -1189,16 +1443,21 @@ export function ProjectPage() {
                     创建于 {formatDate(task.createdAt)} · {task.id.slice(0, 8)}
                   </span>
                 </div>
-                <StatusBadge status={task.status} />
-                {attentions[task.id] &&
-                (attentions[task.id].clarification ||
-                  attentions[task.id].planApproval?.status === "PENDING" ||
-                  attentions[task.id].pendingApprovals > 0 ||
-                  attentions[task.id].validation.failed +
-                    attentions[task.id].validation.timeout >
-                    0) ? (
-                  <Badge tone="warning">待处理</Badge>
-                ) : null}
+                <div className="list-item-actions">
+                  <StatusBadge status={task.status} />
+                  {attentions[task.id] &&
+                  (attentions[task.id].clarification ||
+                    attentions[task.id].planApproval?.status === "PENDING" ||
+                    attentions[task.id].pendingApprovals > 0 ||
+                    attentions[task.id].validation.failed +
+                      attentions[task.id].validation.timeout >
+                      0) ? (
+                    <Badge tone="warning">待处理</Badge>
+                  ) : null}
+                  <Link to={`/tasks/${task.id}`} className="btn">
+                    查看
+                  </Link>
+                </div>
               </div>
             ))}
           </div>
@@ -1294,8 +1553,13 @@ export function NewTaskPage() {
       ) : (
         <form className="form" onSubmit={submit}>
           <div className="card form-card">
+            <div className="form-section">
+              <div className="form-section-heading">
+                <h2>1. 基本信息</h2>
+                <span className="field-hint">必填项会直接影响分析质量</span>
+              </div>
             <label className="field">
-              项目
+              项目 <span className="required-mark">必填</span>
               <select
                 name="projectId"
                 required
@@ -1314,7 +1578,7 @@ export function NewTaskPage() {
               </select>
             </label>
             <label className="field">
-              问题描述
+              问题描述 <span className="required-mark">必填</span>
               <textarea
                 name="bugDescription"
                 required
@@ -1335,6 +1599,13 @@ export function NewTaskPage() {
                 placeholder="留空则自动生成"
               />
             </label>
+            </div>
+
+            <div className="form-section">
+              <div className="form-section-heading">
+                <h2>2. 问题现状</h2>
+                <span className="field-hint">帮助 Codex 建立清晰的目标</span>
+              </div>
             <div className="two-column-fields">
               <label className="field">
                 当前行为
@@ -1353,6 +1624,13 @@ export function NewTaskPage() {
                 />
               </label>
             </div>
+            </div>
+
+            <div className="form-section">
+              <div className="form-section-heading">
+                <h2>3. 复现与上下文</h2>
+                <span className="field-hint">尽量补充，可以显著提高定位准确率</span>
+              </div>
             <label className="field">
               复现步骤
               <textarea
@@ -1385,6 +1663,13 @@ export function NewTaskPage() {
                 placeholder="src/app/login.ts"
               />
             </label>
+            </div>
+
+            <div className="form-section">
+              <div className="form-section-heading">
+                <h2>4. 验收与约束</h2>
+                <span className="field-hint">决定这次修复怎样算完成</span>
+              </div>
             <label className="field">
               验收条件（每行一个）
               <textarea
@@ -1401,6 +1686,7 @@ export function NewTaskPage() {
                 placeholder="例如：不要修改数据库结构"
               />
             </label>
+            </div>
           </div>
           <ErrorNotice message={error} />
           <div className="form-actions">
@@ -1417,99 +1703,30 @@ export function NewTaskPage() {
 export function TaskDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [detail, setDetail] = useState<TaskDetail | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
-  const [error, setError] = useState("");
+  const { state, loading, error, refresh } = useWorkflowState(id);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
-  const [clarification, setClarification] = useState<PendingClarification | null>(null);
-  const [attention, setAttention] = useState<TaskAttention | null>(null);
+  const [actionError, setActionError] = useState("");
   const { connected, reconnecting, events } = useHarnessEvents(id);
   const { ask, confirmDialog } = useConfirmDialog();
 
-  async function load() {
-    setError("");
-    try {
-      setDetail(await api.getTask(id!));
-    } catch (err) {
-      setError((err as Error).message);
-    }
-    try {
-      setAttention(await api.getAttention(id!));
-    } catch {
-      setAttention(null);
-    }
-  }
-
+  const latestEvent = events.at(-1);
   useEffect(() => {
-    api
-      .listProjects()
-      .then((projects) => {
-        if (detail) {
-          setProject(
-            projects.find((item) => item.id === detail.task.projectId) ?? null,
-          );
-        }
-      })
-      .catch(() => setProject(null));
-  }, [detail?.task.projectId]);
-
-  async function loadAttention() {
-    try {
-      setAttention(await api.getAttention(id!));
-    } catch {
-      setAttention(null);
+    if (latestEvent) {
+      void refresh();
     }
-  }
-
-  async function loadClarification() {
-    try {
-      setClarification(await api.getClarification(id!));
-    } catch {
-      setClarification(null);
-    }
-  }
-
-  const clarificationEvent = events
-    .filter(
-      (event) =>
-        event.type === "clarification.requested" ||
-        event.type === "clarification.answered",
-    )
-    .at(-1);
-
-  useEffect(() => {
-    load();
-  }, [id]);
-
-  useEffect(() => {
-    loadClarification();
-  }, [id, clarificationEvent]);
-
-  useEffect(() => {
-    const active = [
-      "PREPARING_WORKSPACE",
-      "ANALYZING",
-      "IMPLEMENTING",
-      "VALIDATING",
-    ].includes(detail?.task.status ?? "");
-    if (!active) return;
-    const timer = setInterval(() => {
-      load();
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [detail?.task.status]);
+  }, [latestEvent, refresh]);
 
   async function run(action: () => Promise<unknown>, label: string) {
     setBusy(label);
     setMessage("");
-    setError("");
+    setActionError("");
     try {
       await action();
       setMessage(`${label} 成功`);
-      await load();
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setBusy("");
     }
@@ -1526,7 +1743,7 @@ export function TaskDetailPage() {
   }
 
   async function deleteTask() {
-    if (!detail) {
+    if (!state) {
       return;
     }
     ask({
@@ -1537,30 +1754,26 @@ export function TaskDetailPage() {
       action: async () => {
         setBusy("删除任务");
         setMessage("");
-        setError("");
+        setActionError("");
         try {
           await api.deleteTask(id!);
-          navigate(`/projects/${detail.task.projectId}`);
+          navigate(`/projects/${state.task.projectId}`);
         } catch (err) {
-          setError((err as Error).message);
+          setActionError((err as Error).message);
           setBusy("");
         }
       },
     });
   }
 
-  if (error && !detail) {
-    return <ErrorNotice message={`加载失败：${error}`} />;
-  }
-  if (!detail) {
-    return <Loading />;
-  }
-
-  const status = detail.task.status;
-  const canAnalyze =
-    status === "DRAFT" ||
-    status === "PREPARING_WORKSPACE";
-  const canImplement = status === "IMPLEMENTING";
+  const status = state?.task.status ?? "DRAFT";
+  const canAnalyze = status === "DRAFT" || status === "PREPARING_WORKSPACE";
+  const hasRunningImplementation = state?.jobs.some(
+    (job) =>
+      job.status === "running" &&
+      (job.kind === "implement" || job.kind === "continue-fix"),
+  );
+  const canImplement = status === "IMPLEMENTING" && !hasRunningImplementation;
   const canCancel = [
     "DRAFT",
     "PREPARING_WORKSPACE",
@@ -1571,132 +1784,87 @@ export function TaskDetailPage() {
     "WAITING_FOR_ACCEPTANCE",
     "BLOCKED",
   ].includes(status);
+  const nextAction = state ? nextActionForState(state) : null;
+  const currentStep = currentStepForStatus(status as keyof typeof STATUS_META);
+  const currentStepLabel =
+    WORKFLOW_STEPS.find((step) => step.key === currentStep)?.label ?? "任务详情";
   const workflowHint =
-    status === "DRAFT" || status === "PREPARING_WORKSPACE"
-      ? "当前任务还未开始分析，点击“开始修复”让 Codex 生成修复计划。"
-      : status === "WAITING_FOR_PLAN_APPROVAL"
-        ? "修复计划已生成，请先到“计划确认”中批准，再回来继续实施。"
-        : status === "IMPLEMENTING"
-          ? "计划已批准，可以开始让 Codex 实施修改。"
-          : status === "VALIDATING"
-            ? "代码修改已完成，正在或等待自动检查。可前往“变更与检查”查看结果。"
-            : status === "WAITING_FOR_ACCEPTANCE"
-              ? "检查已通过，请前往“验收报告”做最终决定。"
-              : "当前状态不能直接开始分析或实施，请先查看下方工作流页面。";
+    nextAction?.description ??
+    (state ? nextActionForState(state).description : "请查看任务详情。");
+  const primaryAction = canAnalyze ? (
+    <button
+      type="button"
+      className="btn btn-primary"
+      disabled={Boolean(busy)}
+      onClick={() => run(() => api.analyze(id!), "开始修复")}
+    >
+      {busy === "开始修复" ? "处理中..." : "开始修复"}
+    </button>
+  ) : canImplement ? (
+    <button
+      type="button"
+      className="btn btn-primary"
+      disabled={Boolean(busy)}
+      onClick={() => run(() => api.implement(id!), "开始实施")}
+    >
+      {busy === "开始实施" ? "处理中..." : "开始实施"}
+    </button>
+  ) : null;
 
   return (
-    <section>
+    <TaskShell
+      state={state}
+      loading={loading}
+      error={error}
+      kicker="任务详情"
+      title={state?.task.title ?? "任务"}
+      primaryAction={primaryAction}
+    >
       {confirmDialog}
-      <div className="page-context">
-        <BackLink to={`/projects/${detail.task.projectId}`}>返回项目任务</BackLink>
-      </div>
-      <PageHeader
-        kicker="任务详情"
-        title={detail.task.title}
-        actions={<StatusBadge status={detail.task.status} />}
-      />
-
-      <div className="card card-compact task-project-context">
-        <span className="meta-label">所属项目</span>
-        {project ? (
-          <Link to={`/projects/${project.id}`}>{project.name}</Link>
-        ) : (
-          <span className="mono">{detail.task.projectId}</span>
-        )}
-        {project ? <span className="mono muted">{project.repoPath}</span> : null}
-      </div>
-
-      {attention &&
-      (attention.clarification ||
-        attention.planApproval?.status === "PENDING" ||
-        attention.pendingApprovals > 0 ||
-        attention.validation.failed + attention.validation.timeout > 0) ? (
-        <div className="card">
-          <div className="card-head">
-            <h2>待你处理</h2>
-          </div>
-          <ul className="checklist">
-            {attention.clarification ? (
-              <li className="check-item">
-                <WarningIcon />
-                <span>Codex 正在等待你补充信息，请完成下方提问。</span>
-              </li>
-            ) : null}
-            {attention.planApproval?.status === "PENDING" ? (
-              <li className="check-item">
-                <WarningIcon />
-                <span>
-                  修复计划已生成，等待你确认。
-                  <Link to={`/tasks/${id}/plan`}>查看计划</Link>
-                </span>
-              </li>
-            ) : null}
-            {attention.pendingApprovals > 0 ? (
-              <li className="check-item">
-                <WarningIcon />
-                <span>
-                  有 {attention.pendingApprovals} 个操作等待审批。
-                  <Link to={`/tasks/${id}/approvals`}>查看审批</Link>
-                </span>
-              </li>
-            ) : null}
-            {attention.validation.failed + attention.validation.timeout > 0 ? (
-              <li className="check-item">
-                <WarningIcon />
-                <span>
-                  有检查未通过，请查看结果并决定下一步。
-                  <Link to={`/tasks/${id}/diff`}>查看检查</Link>
-                </span>
-              </li>
-            ) : null}
-          </ul>
-        </div>
-      ) : null}
-
       <div className="card">
         <div className="meta-grid">
           <div className="meta-cell">
             <span className="meta-label">创建时间</span>
-            <span>{formatDate(detail.task.createdAt)}</span>
+            <span>{formatDate(state?.task.createdAt ?? "")}</span>
           </div>
           <div className="meta-cell">
             <span className="meta-label">更新时间</span>
-            <span>{formatDate(detail.task.updatedAt)}</span>
+            <span>{formatDate(state?.task.updatedAt ?? "")}</span>
           </div>
           <div className="meta-cell">
             <span className="meta-label">状态</span>
-            <StatusBadge status={detail.task.status} />
+            <StatusBadge status={status} />
           </div>
           <div className="meta-cell">
             <span className="meta-label">验收条件</span>
-            <span>{detail.task.acceptanceCriteria.length} 条</span>
+            <span>{state?.task.acceptanceCriteria.length ?? 0} 条</span>
           </div>
         </div>
       </div>
 
-      {detail.contract ? (
+      {state?.contract ? (
         <div className="card">
           <div className="card-head">
             <h2>任务说明</h2>
           </div>
           <div className="facts">
-            <Fact label="目标" value={detail.contract.goal} />
+            <Fact label="目标" value={state.contract.goal} />
             <Fact
               label="当前行为"
-              value={detail.contract.observedBehavior || detail.task.observedBehavior || "未提供"}
+              value={state.contract.observedBehavior || state.task.observedBehavior || "未提供"}
             />
             <Fact
               label="期望行为"
-              value={detail.contract.expectedBehavior || detail.task.expectedBehavior || "未提供"}
+              value={state.contract.expectedBehavior || state.task.expectedBehavior || "未提供"}
             />
-            {detail.contract.reproduction ? (
-              <Fact label="复现信息" value={detail.contract.reproduction} />
+            {state.contract.reproduction ? (
+              <Fact label="复现信息" value={state.contract.reproduction} />
             ) : null}
             <ListFact
               label="验收条件"
-              items={detail.contract.acceptanceCriteria}
+              items={state.contract.acceptanceCriteria}
             />
-            <ListFact label="约束条件" items={detail.contract.constraints} />
+            <ListFact label="约束条件" items={state.contract.constraints} />
           </div>
         </div>
       ) : null}
@@ -1704,45 +1872,9 @@ export function TaskDetailPage() {
       <div className="card">
         <div className="card-head">
           <h2>工作流</h2>
+          <Badge tone="active">{currentStepLabel}</Badge>
         </div>
         <p className="muted workflow-hint">{workflowHint}</p>
-        <div className="actions">
-          <Link to={`/tasks/${id}/plan`} className="btn">
-            计划确认
-          </Link>
-          <Link to={`/tasks/${id}/approvals`} className="btn">
-            操作审批
-          </Link>
-          <Link to={`/tasks/${id}/diff`} className="btn">
-            变更与检查
-          </Link>
-          <Link to={`/tasks/${id}/report`} className="btn">
-            验收报告
-          </Link>
-        </div>
-        <div className="divider" />
-        <div className="actions">
-          <button
-            className="btn-primary"
-            disabled={!canAnalyze || Boolean(busy)}
-            title={
-              canAnalyze
-                ? ""
-                : workflowHint
-            }
-            onClick={() => run(() => api.analyze(id!), "开始修复")}
-          >
-            开始修复
-          </button>
-          <button
-            className="btn-primary"
-            disabled={!canImplement || Boolean(busy)}
-            title={canImplement ? "" : workflowHint}
-            onClick={() => run(() => api.implement(id!), "开始实施")}
-          >
-            开始实施
-          </button>
-        </div>
         <div className="divider" />
         <div className="actions">
           {canCancel ? (
@@ -1766,23 +1898,20 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {clarification ? (
+      {state?.attention.clarification ? (
         <ClarificationPanel
-          clarification={clarification}
+          clarification={state.attention.clarification}
           onAnswered={() => {
-            setClarification(null);
-            loadAttention();
-            loadClarification();
-            load();
+            refresh();
           }}
         />
       ) : null}
 
       {busy && <Loading>{busy}...</Loading>}
-      <ErrorNotice message={error} />
+      <ErrorNotice message={actionError || error} />
       <SuccessNotice message={message} />
 
-      <section className="card">
+      <div className="card">
         <div className="card-head">
           <h2>实时事件</h2>
           <Badge tone={connected ? "success" : reconnecting ? "warning" : "danger"}>
@@ -1801,48 +1930,71 @@ export function TaskDetailPage() {
             ))}
           </ul>
         )}
-      </section>
-    </section>
+      </div>
+    </TaskShell>
   );
 }
 
 export function PlanPage() {
   const { id } = useParams();
-  const [plan, setPlan] = useState<any>(null);
+  const navigate = useNavigate();
+  const { state, loading, error, refresh } = useWorkflowState(id);
+  const plan = state?.planApproval ?? null;
   const [comment, setComment] = useState("");
-  const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState("");
   const [question, setQuestion] = useState("");
   const [aiAnswer, setAiAnswer] = useState("");
   const [asking, setAsking] = useState(false);
-  const [loading, setLoading] = useState(true);
   const { ask, confirmDialog } = useConfirmDialog();
 
-  async function loadPlan() {
-    setError("");
-    return api.getPlan(id!).then(setPlan).catch(() => setPlan(null));
+  async function approveOnly() {
+    setBusy("仅批准");
+    setMessage("");
+    setActionError("");
+    try {
+      await api.approvePlan(id!, comment);
+      setMessage("已批准计划，下一步可以开始实施。");
+      await refresh();
+      navigate(`/tasks/${id}`);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy("");
+    }
   }
 
-  useEffect(() => {
-    setLoading(true);
-    loadPlan().finally(() => setLoading(false));
-  }, [id]);
-
-  async function decide(
-    action: () => Promise<unknown>,
-    label: string,
-    success: string,
-  ) {
-    setBusy(label);
-    setError("");
+  async function approveAndImplement() {
+    setBusy("批准并实施");
     setMessage("");
+    setActionError("");
     try {
-      await action();
-      setMessage(success);
-      await loadPlan();
+      await api.approvePlan(id!, comment);
+      setMessage("计划已批准，正在开始实施。");
+      await api.implement(id!);
+      setMessage("实施任务已启动，将在后台执行并自动验证。");
+      await refresh();
+      navigate(`/tasks/${id}/diff`);
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function rejectAndReanalyze() {
+    setBusy("退回并重新分析");
+    setMessage("");
+    setActionError("");
+    try {
+      await api.rejectPlan(id!, comment);
+      setMessage("计划已退回，正在重新分析。");
+      await api.analyze(id!);
+      await refresh();
+      navigate(`/tasks/${id}`);
+    } catch (err) {
+      setActionError((err as Error).message);
     } finally {
       setBusy("");
     }
@@ -1850,34 +2002,41 @@ export function PlanPage() {
 
   async function askQuestion() {
     setAsking(true);
-    setError("");
+    setMessage("");
+    setActionError("");
     setAiAnswer("");
     try {
       const result = await api.askPlanQuestion(id!, question);
       setAiAnswer(result.answer);
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setAsking(false);
     }
   }
 
   const canDecide = plan?.status === "PENDING" && !busy;
+  const planContent = (plan?.content ?? {}) as Record<string, unknown>;
 
   return (
-    <section>
+    <TaskShell
+      state={state}
+      loading={loading}
+      error={error}
+      kicker="审查"
+      title="修复计划"
+    >
       {confirmDialog}
-      <div className="page-context">
-        <BackLink to={`/tasks/${id}`}>返回任务详情</BackLink>
-      </div>
-      <PageHeader kicker="审查" title="修复计划" />
-      <ErrorNotice message={error} />
+      <ErrorNotice message={actionError} />
       <SuccessNotice message={message} />
-      {loading ? (
-        <Loading />
-      ) : !plan ? (
+      {!plan ? (
         <div className="card empty-state">
           <p className="muted">当前没有待确认的修复计划。</p>
+          <div className="actions">
+            <Link to={`/tasks/${id}`} className="btn btn-primary">
+              返回任务详情
+            </Link>
+          </div>
         </div>
       ) : (
         <div className="card">
@@ -1900,20 +2059,34 @@ export function PlanPage() {
             </Badge>
           </div>
           <p className="plan-summary">
-            {plan.content?.problemSummary ?? "问题摘要"}
+            {String(planContent.problemSummary ?? "问题摘要")}
           </p>
+          <div className="plan-highlights">
+            <div>
+              <span>它认为问题在哪里</span>
+              <strong>{String(planContent.rootCauseHypothesis ?? "未提供")}</strong>
+            </div>
+            <div>
+              <span>准备怎么改</span>
+              <strong>{String(planContent.fixStrategy ?? "未提供")}</strong>
+            </div>
+          </div>
           <div className="facts">
-            <Fact label="它认为问题在哪里" value={plan.content?.rootCauseHypothesis} />
-            <Fact label="准备怎么改" value={plan.content?.fixStrategy} />
-            <Fact label="为什么这样判断" value={(plan.content?.evidence ?? []).join("；")} />
+            <Fact
+              label="为什么这样判断"
+              value={(planContent.evidence as string[] | undefined)?.join("；") || "未提供"}
+            />
             <Fact
               label="可能影响哪些文件"
-              value={(plan.content?.proposedFiles ?? []).join("、")}
+              value={(planContent.proposedFiles as string[] | undefined)?.join("、") || "未提供"}
             />
-            <Fact label="需要注意" value={(plan.content?.risks ?? []).join("；") || "无"} />
+            <Fact
+              label="需要注意"
+              value={(planContent.risks as string[] | undefined)?.join("；") || "无"}
+            />
             <Fact
               label="还没完全确定"
-              value={(plan.content?.openQuestions ?? []).join("；") || "无"}
+              value={(planContent.openQuestions as string[] | undefined)?.join("；") || "无"}
             />
           </div>
         </div>
@@ -1960,19 +2133,34 @@ export function PlanPage() {
           />
         </label>
         <div className="divider" />
-        <div className="actions">
+        <div className="actions sticky-actions">
           <button
             className="btn-primary"
             disabled={!canDecide}
             onClick={() =>
-              decide(
-                () => api.approvePlan(id!, comment),
-                "批准",
-                "已批准该修复计划。",
-              )
+              ask({
+                title: "批准并实施",
+                message: "确定批准该计划，并立即让 Codex 开始实施吗？",
+                confirmLabel: "批准并实施",
+                action: approveAndImplement,
+              })
             }
           >
-            {busy === "批准" ? "提交中..." : "批准"}
+            {busy === "批准并实施" ? "处理中..." : "批准并实施"}
+          </button>
+          <button
+            type="button"
+            disabled={!canDecide}
+            onClick={() =>
+              ask({
+                title: "仅批准计划",
+                message: "确定只批准计划，稍后再手动开始实施吗？",
+                confirmLabel: "仅批准",
+                action: approveOnly,
+              })
+            }
+          >
+            {busy === "仅批准" ? "提交中..." : "仅批准"}
           </button>
           <button
             className="btn-danger"
@@ -1980,50 +2168,53 @@ export function PlanPage() {
             onClick={() => {
               ask({
                 title: "退回修复计划",
-                message: "确定退回该修复计划吗？Codex 需要重新分析或调整后再继续。",
+                message: "确定退回并重新分析吗？Codex 会基于退回意见重新生成计划。",
                 confirmLabel: "退回",
                 danger: true,
-                action: () =>
-                  decide(
-                    () => api.rejectPlan(id!, comment),
-                    "退回",
-                    "已退回该修复计划。",
-                  ),
+                action: rejectAndReanalyze,
               });
             }}
           >
-            {busy === "退回" ? "提交中..." : "退回"}
+            {busy === "退回并重新分析" ? "处理中..." : "退回并重新分析"}
           </button>
         </div>
       </div>
-    </section>
+    </TaskShell>
   );
 }
 
 export function ApprovalsPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const { state, loading: workflowLoading, error: workflowError, refresh } =
+    useWorkflowState(id);
   const [items, setItems] = useState<ApprovalRequestItem[]>([]);
-  const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [actionError, setActionError] = useState("");
   const [showDetails, setShowDetails] = useState<string | null>(null);
   const [busyId, setBusyId] = useState("");
   const [batchBusy, setBatchBusy] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const { ask, confirmDialog } = useConfirmDialog();
 
   async function load() {
-    setError("");
+    setLoading(true);
+    setActionError("");
     try {
       setItems(await api.listApprovals(id!));
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    load();
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, 3000);
+    return () => clearInterval(timer);
   }, [id]);
 
   async function decide(
@@ -2050,14 +2241,15 @@ export function ApprovalsPage() {
     label: string,
   ) {
     setBusyId(String(item.id));
-    setError("");
+    setActionError("");
     setMessage("");
     try {
       await api.decideApproval(id!, String(item.id), decision);
       setMessage(`${label}成功`);
       await load();
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setBusyId("");
     }
@@ -2071,7 +2263,7 @@ export function ApprovalsPage() {
   async function runBatch(decision: "accept" | "decline", label: string) {
     if (pendingItems.length === 0) return;
     setBatchBusy(decision);
-    setError("");
+    setActionError("");
     setMessage("");
     try {
       await api.decideApprovals(
@@ -2081,21 +2273,24 @@ export function ApprovalsPage() {
       );
       setMessage(`${label}成功`);
       await load();
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setBatchBusy("");
     }
   }
 
   return (
-    <section>
+    <TaskShell
+      state={state}
+      loading={workflowLoading}
+      error={workflowError}
+      kicker="审查"
+      title="操作审批"
+    >
       {confirmDialog}
-      <div className="page-context">
-        <BackLink to={`/tasks/${id}`}>返回任务详情</BackLink>
-      </div>
-      <PageHeader kicker="审查" title="操作审批" />
-      <ErrorNotice message={error} />
+      <ErrorNotice message={actionError} />
       <SuccessNotice message={message} />
       {loading ? (
         <Loading />
@@ -2135,6 +2330,14 @@ export function ApprovalsPage() {
       {!loading && items.length === 0 ? (
         <div className="card empty-state">
           <p className="muted">暂无审批请求</p>
+          <div className="actions">
+            <Link to={`/tasks/${id}`} className="btn btn-primary">
+              返回任务详情
+            </Link>
+            <Link to={`/tasks/${id}/diff`} className="btn">
+              查看变更与检查
+            </Link>
+          </div>
         </div>
       ) : (
         items.map((item) => (
@@ -2151,7 +2354,9 @@ export function ApprovalsPage() {
               </Badge>
             </div>
             <p className="muted">
-              该操作需要你确认后才能继续。批准表示允许 AI 执行；拒绝会阻止该操作。
+              {item.decision
+                ? "该操作已完成审批。"
+                : "批准表示允许 AI 执行；拒绝会阻止该操作。"}
             </p>
             <div className="approval-meta">
               <span>发起时间：{formatDate(item.createdAt)}</span>
@@ -2198,50 +2403,31 @@ export function ApprovalsPage() {
           </div>
         ))
       )}
-    </section>
+      <div className="actions">
+        <Link to={`/tasks/${id}`} className="btn">
+          返回任务详情
+        </Link>
+        <Link to={`/tasks/${id}/diff`} className="btn btn-primary">
+          查看变更与检查
+        </Link>
+      </div>
+    </TaskShell>
   );
 }
 
 export function DiffPage() {
   const { id } = useParams();
-  const [diff, setDiff] = useState<DiffResult | null>(null);
-  const [validations, setValidations] = useState<ValidationOutcome[]>([]);
-  const [error, setError] = useState("");
+  const { state, loading, error, refresh } = useWorkflowState(id);
+  const diff = state?.diff ?? null;
+  const validations = state?.validations ?? [];
   const [showFiles, setShowFiles] = useState(false);
-  const [showDiff, setShowDiff] = useState(true);
+  const [showDiff, setShowDiff] = useState(false);
   const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
   const [openOutput, setOpenOutput] = useState<string | null>(null);
   const [validateBusy, setValidateBusy] = useState(false);
   const [continueBusy, setContinueBusy] = useState(false);
   const [continueMessage, setContinueMessage] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  async function loadDiff() {
-    try {
-      setDiff(await api.getDiff(id!));
-    } catch {
-      setDiff(null);
-    }
-  }
-
-  async function loadValidations() {
-    try {
-      setValidations(await api.listValidations(id!));
-    } catch {
-      setValidations([]);
-    }
-  }
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([loadDiff(), loadValidations()]).finally(() => {
-      if (!cancelled) setLoading(false);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
+  const [actionError, setActionError] = useState("");
 
   const latestValidations = useMemo(
     () => latestValidationOutcomes(validations),
@@ -2255,11 +2441,14 @@ export function DiffPage() {
 
   async function validate() {
     setValidateBusy(true);
-    setError("");
+    setContinueMessage("");
+    setActionError("");
     try {
-      setValidations(await api.runValidations(id!));
+      await api.runValidations(id!);
+      setContinueMessage("检查已运行。");
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setValidateBusy(false);
     }
@@ -2267,40 +2456,39 @@ export function DiffPage() {
 
   async function continueFix() {
     setContinueBusy(true);
-    setError("");
     setContinueMessage("");
+    setActionError("");
     try {
       await api.continueFix(id!);
       setContinueMessage("已根据失败结果继续修复，验证将自动运行。");
-      await loadDiff();
-      await loadValidations();
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setContinueBusy(false);
     }
   }
 
   return (
-    <section>
-      <div className="page-context">
-        <BackLink to={`/tasks/${id}`}>返回任务详情</BackLink>
-      </div>
-      <PageHeader
-        kicker="检查"
-        title="变更与检查"
-        actions={
-          <button className="btn-primary" onClick={validate} disabled={validateBusy}>
-            {validateBusy ? "检查运行中..." : "运行检查"}
-          </button>
-        }
-      />
-      <ErrorNotice message={error} />
+    <TaskShell
+      state={state}
+      loading={loading}
+      error={error}
+      kicker="检查"
+      title="变更与检查"
+      actions={
+        <button
+          type="button"
+          className="btn"
+          onClick={validate}
+          disabled={validateBusy}
+        >
+          {validateBusy ? "检查运行中..." : "运行检查"}
+        </button>
+      }
+    >
+      <ErrorNotice message={actionError} />
       <SuccessNotice message={continueMessage} />
-      {loading ? (
-        <Loading />
-      ) : (
-        <>
 
       {diff && (
         <div className="card">
@@ -2355,6 +2543,9 @@ export function DiffPage() {
         </div>
       )}
 
+      <p className="muted validation-note">
+        实施完成后会自动运行检查。上方“运行检查”仅用于失败修复后手动复跑。
+      </p>
       {latestValidations.length > 0 && (
         <div className="stack">
           {latestValidations.map((item) => (
@@ -2425,6 +2616,21 @@ export function DiffPage() {
         </div>
       ) : null}
 
+      {latestValidations.every((item) => item.status === "passed") &&
+      latestValidations.length > 0 ? (
+        <div className="card next-step-card">
+          <div className="card-head">
+            <h2>检查全部通过</h2>
+          </div>
+          <p className="muted">接下来可以生成验收报告并做最终决定。</p>
+          <div className="actions">
+            <Link to={`/tasks/${id}/report`} className="btn btn-primary">
+              生成验收报告
+            </Link>
+          </div>
+        </div>
+      ) : null}
+
       <div className="card">
         <div className="card-head">
           <h2>代码差异（技术细节）</h2>
@@ -2462,145 +2668,104 @@ export function DiffPage() {
           <p className="muted">代码差异已收起，可点击上方查看。</p>
         )}
       </div>
-        </>
-      )}
-    </section>
+    </TaskShell>
   );
 }
 
 export function ReportPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [report, setReport] = useState<DeliveryReport | null>(null);
+  const { state, loading, error, refresh } = useWorkflowState(id);
+  const report = state?.report ?? null;
   const [comment, setComment] = useState("");
-  const [error, setError] = useState("");
   const [buildBusy, setBuildBusy] = useState(false);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState("");
   const [decisionMessage, setDecisionMessage] = useState("");
   const [finalDecision, setFinalDecision] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState("");
   const { ask, confirmDialog } = useConfirmDialog();
-
-  useEffect(() => {
-    setError("");
-    api
-      .getReport(id!)
-      .then(setReport)
-      .catch(() => setReport(null))
-      .finally(() => setLoading(false));
-  }, [id]);
 
   async function build() {
     setBuildBusy(true);
-    setError("");
+    setActionError("");
     try {
-      setReport(await api.buildReport(id!));
+      await api.buildReport(id!);
+      await refresh();
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
     } finally {
       setBuildBusy(false);
     }
   }
 
-  async function decide(action: () => Promise<unknown>, label: string) {
+  async function decide(
+    action: () => Promise<unknown>,
+    label: string,
+    navigateAfter: boolean,
+  ) {
     setDecisionBusy(label);
-    setError("");
+    setActionError("");
     setDecisionMessage("");
     try {
       await action();
       setDecisionMessage(
         label === "通过"
           ? "已标记为通过。"
-          : label === "需要再改"
-            ? "已退回修改，Codex 会继续处理。"
+          : label === "需要再改并继续实施"
+            ? "已退回修改，并已触发 Codex 继续实施。"
             : "已标记为不采用。",
       );
       setFinalDecision(label);
-      if (label === "通过" || label === "不采用") {
+      await refresh();
+      if (navigateAfter) {
         navigate(`/tasks/${id}`);
       }
     } catch (err) {
-      setError((err as Error).message);
+      setActionError((err as Error).message);
+    } finally {
+      setDecisionBusy("");
+    }
+  }
+
+  async function reworkAndImplement() {
+    setDecisionBusy("需要再改并继续实施");
+    setActionError("");
+    setDecisionMessage("");
+    try {
+      await api.returnTask(id!, comment);
+      setDecisionMessage("已退回修改，正在继续实施。");
+      await api.implement(id!);
+      setDecisionMessage("已继续实施，自动验证将在后台运行。可稍后查看变更与检查。");
+      await refresh();
+      setFinalDecision("需要再改并继续实施");
+    } catch (err) {
+      setActionError((err as Error).message);
     } finally {
       setDecisionBusy("");
     }
   }
 
   return (
-    <section>
+    <TaskShell
+      state={state}
+      loading={loading}
+      error={error}
+      kicker="交付"
+      title="验收报告"
+      actions={
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={build}
+          disabled={buildBusy}
+        >
+          {buildBusy ? "生成中..." : "生成验收报告"}
+        </button>
+      }
+    >
       {confirmDialog}
-      <div className="page-context">
-        <BackLink to={`/tasks/${id}`}>返回任务详情</BackLink>
-      </div>
-      <PageHeader
-        kicker="交付"
-        title="验收报告"
-        actions={
-          <button className="btn-primary" onClick={build} disabled={buildBusy}>
-            {buildBusy ? "生成中..." : "生成验收报告"}
-          </button>
-        }
-      />
-      {loading ? (
-        <Loading />
-      ) : (
-        <>
-
-      <div className="card">
-        <div className="card-head">
-          <h2>你的决定</h2>
-        </div>
-        <p className="muted">
-          报告生成后，请按自己的预期判断结果是否可用。不确定时可以选择“需要再改”。
-        </p>
-        {!report ? (
-          <p className="muted field-hint">
-            当前还没有可用的验收报告，请先点击上方“生成验收报告”。
-          </p>
-        ) : null}
-        <label className="field">
-          补充说明（选填）
-          <input
-            value={comment}
-            onChange={(event) => setComment(event.target.value)}
-            placeholder="例如：还有哪一步不符合预期，或希望改成什么样"
-          />
-        </label>
-        <div className="divider" />
-        <div className="actions">
-          <button
-            className="btn-primary"
-            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
-            onClick={() => decide(() => api.acceptTask(id!), "通过")}
-          >
-            通过
-          </button>
-          <button
-            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
-            onClick={() => decide(() => api.returnTask(id!, comment), "需要再改")}
-          >
-            需要再改
-          </button>
-          <button
-            className="btn-danger"
-            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
-            onClick={() => {
-              ask({
-                title: "不采用修复结果",
-                message: "确定不采用这个修复结果吗？该任务会被标记为不采用。",
-                confirmLabel: "不采用",
-                danger: true,
-                action: () => decide(() => api.rejectTask(id!, comment), "不采用"),
-              });
-            }}
-          >
-            不采用
-          </button>
-        </div>
-      </div>
-
-      <ErrorNotice message={error} />
+      <ErrorNotice message={actionError} />
       <SuccessNotice message={decisionMessage} />
 
       {report ? (
@@ -2725,11 +2890,64 @@ export function ReportPage() {
           <p className="muted">
             尚未生成验收报告，点击上方“生成验收报告”开始。
           </p>
+          <div className="actions">
+            <Link to={`/tasks/${id}/diff`} className="btn">
+              查看变更与检查
+            </Link>
+          </div>
         </div>
       )}
-        </>
-      )}
-    </section>
+
+      <div className="card decision-card">
+        <div className="card-head">
+          <h2>你的决定</h2>
+        </div>
+        <p className="muted">
+          请先查看上方报告，再决定结果是否可用。不确定时可以选择继续修改。
+        </p>
+        <label className="field">
+          补充说明（选填）
+          <input
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+            placeholder="例如：还有哪一步不符合预期，或希望改成什么样"
+          />
+        </label>
+        <div className="divider" />
+        <div className="actions sticky-actions">
+          <button
+            className="btn-primary"
+            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
+            onClick={() => decide(() => api.acceptTask(id!), "通过", true)}
+          >
+            {decisionBusy === "通过" ? "处理中..." : "通过"}
+          </button>
+          <button
+            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
+            onClick={reworkAndImplement}
+          >
+            {decisionBusy === "需要再改并继续实施"
+              ? "处理中..."
+              : "需要再改并继续实施"}
+          </button>
+          <button
+            className="btn-danger"
+            disabled={!report || Boolean(decisionBusy) || Boolean(finalDecision)}
+            onClick={() => {
+              ask({
+                title: "不采用修复结果",
+                message: "确定不采用这个修复结果吗？该任务会被标记为不采用。",
+                confirmLabel: "不采用",
+                danger: true,
+                action: () => decide(() => api.rejectTask(id!, comment), "不采用", true),
+              });
+            }}
+          >
+            {decisionBusy === "不采用" ? "处理中..." : "不采用"}
+          </button>
+        </div>
+      </div>
+    </TaskShell>
   );
 }
 

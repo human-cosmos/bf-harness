@@ -141,6 +141,52 @@ export interface DeliveryReport {
   recommendedReviewLocations: string[];
 }
 
+export interface WorkflowProject {
+  id: string;
+  name: string;
+  repoPath: string;
+}
+
+export interface WorkflowWorktree {
+  id: string;
+  path: string;
+  baseCommit: string;
+  branch: string;
+  status: "CREATING" | "READY" | "FAILED" | "CLEANING";
+}
+
+export interface BackgroundJob {
+  id: string;
+  taskId: string;
+  kind: "implement" | "continue-fix" | "validate" | "report";
+  status: "running" | "succeeded" | "failed";
+  message: string;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+}
+
+export interface WorkflowState {
+  task: BugfixTask;
+  project: WorkflowProject | null;
+  contract?: TaskContract;
+  worktree: WorkflowWorktree | null;
+  attention: TaskAttention;
+  planApproval: {
+    id: string;
+    taskId: string;
+    status: "PENDING" | "APPROVED" | "REJECTED";
+    content?: Record<string, unknown>;
+    createdAt: string;
+    decidedAt?: string;
+  } | null;
+  pendingApprovals: ApprovalRequestItem[];
+  validations: ValidationOutcome[];
+  report: DeliveryReport | null;
+  diff: DiffResult | null;
+  jobs: BackgroundJob[];
+}
+
 type RequestOptions = RequestInit & { timeoutMs?: number | null };
 
 async function request<T>(url: string, init: RequestOptions = {}): Promise<T> {
@@ -191,6 +237,10 @@ export const api = {
       body: JSON.stringify(input),
     }),
   getTask: (id: string) => request<TaskDetail>(`/api/tasks/${id}`),
+  getWorkflowState: (id: string) =>
+    request<WorkflowState>(`/api/tasks/${id}/workflow-state`),
+  getJob: (id: string, jobId: string) =>
+    request<BackgroundJob>(`/api/tasks/${id}/jobs/${jobId}`),
   prepareWorktree: (id: string) =>
     request(`/api/tasks/${id}/prepare-worktree`, { method: "POST" }),
   getPlan: (id: string) => request(`/api/tasks/${id}/plan`),
@@ -219,19 +269,19 @@ export const api = {
     request<ApprovalRequestItem[]>(`/api/tasks/${id}/approvals`),
   getDiff: (id: string) => request<DiffResult>(`/api/tasks/${id}/diff`),
   runValidations: (id: string) =>
-    request<ValidationOutcome[]>(`/api/tasks/${id}/validate`, {
+    request<{ jobId: string; job: BackgroundJob }>(`/api/tasks/${id}/validate`, {
       method: "POST",
-      timeoutMs: 0,
     }),
   listValidations: (id: string) =>
     request<ValidationOutcome[]>(`/api/tasks/${id}/validations`),
   continueFix: (id: string) =>
-    request(`/api/tasks/${id}/continue-fix`, { method: "POST", timeoutMs: 0 }),
+    request<{ jobId: string; job: BackgroundJob }>(`/api/tasks/${id}/continue-fix`, {
+      method: "POST",
+    }),
   getReport: (id: string) => request<DeliveryReport>(`/api/tasks/${id}/report`),
   buildReport: (id: string) =>
-    request<DeliveryReport>(`/api/tasks/${id}/report`, {
+    request<{ jobId: string; job: BackgroundJob }>(`/api/tasks/${id}/report`, {
       method: "POST",
-      timeoutMs: 0,
     }),
   analyze: (id: string) => request(`/api/tasks/${id}/analyze`, { method: "POST" }),
   getAnalysis: (id: string) => request(`/api/tasks/${id}/analysis`),
@@ -248,7 +298,9 @@ export const api = {
       body: JSON.stringify({ answers }),
     }),
   implement: (id: string) =>
-    request(`/api/tasks/${id}/implement`, { method: "POST", timeoutMs: 0 }),
+    request<{ jobId: string; job: BackgroundJob }>(`/api/tasks/${id}/implement`, {
+      method: "POST",
+    }),
   acceptTask: (id: string) => request(`/api/tasks/${id}/accept`, { method: "POST" }),
   rejectTask: (id: string, comment?: string) =>
     request(`/api/tasks/${id}/reject`, {
