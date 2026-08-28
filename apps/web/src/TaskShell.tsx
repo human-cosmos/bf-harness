@@ -37,8 +37,14 @@ function AttentionPanel({ state }: { state: WorkflowState }) {
       href: `/tasks/${state.task.id}/approvals`,
     });
   }
-  if (state.attention.validation.failed + state.attention.validation.timeout > 0) {
-    items.push({ label: "有自动检查未通过", href: `/tasks/${state.task.id}/diff` });
+  if (
+    state.task.status === "VALIDATING" &&
+    state.attention.validation.failed + state.attention.validation.timeout > 0
+  ) {
+    items.push({
+      label: "有自动检查未通过",
+      href: `/tasks/${state.task.id}/diff#validation-action`,
+    });
   }
   if (state.task.status === "WAITING_FOR_ACCEPTANCE") {
     items.push({ label: "修复结果等待你验收", href: `/tasks/${state.task.id}/report` });
@@ -106,6 +112,7 @@ export function TaskShell({
 
   const stepIndex = stepIndexForStatus(state.task.status);
   const nextAction = nextActionForState(state);
+  const isTaskDetail = location.pathname === `/tasks/${state.task.id}`;
   const isCurrentActionPage =
     nextAction.key !== "none" && location.pathname === nextAction.href;
   const runningJob = state.jobs.find((job) => job.status === "running");
@@ -198,7 +205,7 @@ export function TaskShell({
         )}
       </div>
 
-      <AttentionPanel state={state} />
+      {isTaskDetail ? <AttentionPanel state={state} /> : null}
 
       {runningJob ? (
         <div className="job-progress" role="status">

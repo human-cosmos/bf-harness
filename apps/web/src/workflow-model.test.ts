@@ -118,5 +118,6 @@ describe("workflow model", () => {
       }),
     );
     expect(next.key).toBe("continue-fix");
+    expect(next.href).toContain("#validation-action");
   });
 });

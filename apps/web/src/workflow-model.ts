@@ -183,7 +183,7 @@ export function nextActionForState(state: WorkflowState): NextAction {
         key: "continue-fix",
         label: "根据失败结果继续修复",
         description: "有检查未通过，Codex 可以带着失败信息继续修改。",
-        href: `/tasks/${state.task.id}/diff`,
+        href: `/tasks/${state.task.id}/diff#validation-action`,
         primary: true,
       };
     }

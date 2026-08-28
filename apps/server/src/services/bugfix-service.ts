@@ -29,6 +29,11 @@ import {
   ClarificationCoordinator,
   type ClarificationAnswers,
 } from "./clarification-coordinator.js";
+import {
+  groupFailedValidationRuns,
+  nextValidationAction,
+  validationFailureSignature,
+} from "./retry-policy.js";
 
 const localCodexBin = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -304,6 +309,25 @@ export class BugfixService {
       .filter((row) => row.status === "failed" || row.status === "timeout");
     if (failed.length === 0) {
       throw new Error("No failed validation results to continue fixing");
+    }
+
+    const failedRuns = groupFailedValidationRuns(
+      this.execution.validationResults.listByTask(taskId),
+    );
+    const currentRound = failedRuns.length;
+    const sameFailure =
+      failedRuns.length >= 2 &&
+      validationFailureSignature(failedRuns.at(-1)!.failures) ===
+        validationFailureSignature(failedRuns.at(-2)!.failures);
+    const validationAction = nextValidationAction({
+      currentRound,
+      sameFailure,
+    });
+    if (validationAction === "BLOCKED") {
+      this.workflow.transitionTask(taskId, "BLOCKED");
+      throw new Error(
+        "Same validation failure reached the automatic repair limit. Task is blocked for manual review.",
+      );
     }
 
     const feedback = failed

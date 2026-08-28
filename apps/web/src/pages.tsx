@@ -9,6 +9,7 @@ import {
   Link,
   NavLink,
   Outlet,
+  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -2480,6 +2481,7 @@ export function ApprovalsPage() {
 
 export function DiffPage() {
   const { id } = useParams();
+  const location = useLocation();
   const { state, loading, error, refresh } = useWorkflowState(id);
   const diff = state?.diff ?? null;
   const validations = state?.validations ?? [];
@@ -2491,6 +2493,16 @@ export function DiffPage() {
   const [continueBusy, setContinueBusy] = useState(false);
   const [continueMessage, setContinueMessage] = useState("");
   const [actionError, setActionError] = useState("");
+
+  useEffect(() => {
+    if (location.hash !== "#validation-action") return;
+    const timer = setTimeout(() => {
+      document
+        .getElementById("validation-action")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [location.hash]);
 
   const latestValidations = useMemo(
     () => latestValidationOutcomes(validations),
@@ -2656,7 +2668,7 @@ export function DiffPage() {
       {latestValidations.some(
         (item) => item.status === "failed" || item.status === "timeout",
       ) ? (
-        <div className="card">
+        <div className="card" id="validation-action">
           <div className="card-head">
             <h2>检查未通过</h2>
           </div>
@@ -2664,14 +2676,18 @@ export function DiffPage() {
             失败原因见上方各项检查输出。点击下方按钮，Codex 会带着这些失败输出继续修改，并在完成后自动重新验证。
           </p>
           <div className="actions">
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={continueBusy}
-              onClick={continueFix}
-            >
-              {continueBusy ? "正在继续修复..." : "根据失败结果继续修复"}
-            </button>
+            {state?.task.status === "VALIDATING" ? (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={continueBusy}
+                onClick={continueFix}
+              >
+                {continueBusy ? "正在继续修复..." : "根据失败结果继续修复"}
+              </button>
+            ) : (
+              <p className="muted">任务已受阻，请人工检查失败输出后处理。</p>
+            )}
             <Link to={`/tasks/${id}`} className="btn">
               返回任务详情处理
             </Link>

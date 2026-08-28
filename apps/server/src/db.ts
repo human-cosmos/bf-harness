@@ -215,6 +215,15 @@ export function migrate(db: AppDatabase): void {
         );
       `,
     },
+    {
+      version: 4,
+      sql: `
+        ALTER TABLE validation_results ADD COLUMN validation_run_id TEXT;
+        UPDATE validation_results
+        SET validation_run_id = 'legacy-' || task_id
+        WHERE validation_run_id IS NULL;
+      `,
+    },
   ];
 
   for (const migration of migrations) {

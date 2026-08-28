@@ -1,4 +1,5 @@
 import type { AppDatabase } from "../db.js";
+import { randomUUID } from "node:crypto";
 import { ApprovalRequestRepository } from "../repositories/approval-request-repository.js";
 import { DeliveryReportRepository } from "../repositories/delivery-report-repository.js";
 import { PlanApprovalRepository } from "../repositories/plan-approval-repository.js";
@@ -238,10 +239,11 @@ export class ExecutionService {
     const worktree = this.requireWorktree(taskId);
     const project = this.requireProject(task.projectId);
     const outcomes: ValidationOutcome[] = [];
+    const validationRunId = randomUUID();
 
     for (const command of project.validationCommands) {
       const outcome = await this.validationRunner.run(command, worktree.path);
-      this.validationResults.save(taskId, outcome);
+      this.validationResults.save(taskId, outcome, undefined, validationRunId);
       outcomes.push(outcome);
     }
 
