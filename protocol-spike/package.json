@@ -1,0 +1,19 @@
+{
+  "name": "bugfix-harness-protocol-spike",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal JSON-RPC stdio spike against codex-harness app-server.",
+  "scripts": {
+    "spike": "node index.mjs",
+    "validate:v1": "node validations/v1-output-schema.mjs",
+    "validate:v2": "node validations/v2-multiturn-interrupt.mjs",
+    "validate:v3": "node validations/v3-worktree-diff.mjs",
+    "validate:v4": "node validations/v4-restart-recovery.mjs",
+    "validate:v5": "node --test validations/v5-approval-matrix.test.mjs",
+    "validate": "npm run validate:v1 && npm run validate:v2 && npm run validate:v3 && npm run validate:v4 && npm run validate:v5"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

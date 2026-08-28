@@ -1,0 +1,338 @@
+import {
+  buildAnalyzePrompt,
+  buildImplementPrompt,
+  buildPlanQuestionPrompt,
+  planOutputSchema,
+  planSchema,
+  type ClarificationQuestion,
+  type RepairPlan,
+  type Worktree,
+} from "@bugfix-harness/shared";
+import { AgentSessionRepository } from "../repositories/agent-session-repository.js";
+import { AgentEventRepository } from "../repositories/agent-event-repository.js";
+import { PlanApprovalRepository } from "../repositories/plan-approval-repository.js";
+import { ProjectRepository } from "../repositories/project-repository.js";
+import { TaskRepository } from "../repositories/task-repository.js";
+import { WorktreeRepository } from "../repositories/worktree-repository.js";
+import { AppServerRuntime } from "./app-server-runtime.js";
+import { ExecutionService } from "./execution-service.js";
+import { WorkflowService } from "./workflow-service.js";
+import { RuntimeEventRecorder } from "./runtime-event-recorder.js";
+import { ClarificationCoordinator } from "./clarification-coordinator.js";
+
+function stripCodeFences(text: string): string {
+  return text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+export class AgentOrchestrator {
+  constructor(
+    private readonly tasks: TaskRepository,
+    private readonly projects: ProjectRepository,
+    private readonly worktrees: WorktreeRepository,
+    private readonly workflow: WorkflowService,
+    private readonly execution: ExecutionService,
+    private readonly sessions: AgentSessionRepository,
+    private readonly events: AgentEventRepository,
+    private readonly plans: PlanApprovalRepository,
+    private readonly codexBin: string,
+    private readonly prepareWorktree: (taskId: string) => Promise<Worktree>,
+    private readonly clarifications: ClarificationCoordinator,
+    private readonly analysisTimeoutMs: number,
+  ) {}
+
+  private readonly activeRuntimes = new Map<string, AppServerRuntime>();
+
+  async interruptTask(taskId: string): Promise<void> {
+    const runtime = this.activeRuntimes.get(taskId);
+    if (!runtime) {
+      return;
+    }
+
+    if (runtime.currentThreadId && runtime.currentTurnId) {
+      try {
+        await runtime.interrupt(runtime.currentThreadId, runtime.currentTurnId);
+      } catch {
+        // The turn may have already completed. Closing below remains best-effort.
+      }
+    }
+
+    try {
+      runtime.close();
+    } catch {
+      // Ignore double-close or process-guard errors during cancellation.
+    }
+  }
+
+  private trackRuntime(taskId: string, runtime: AppServerRuntime): void {
+    this.activeRuntimes.set(taskId, runtime);
+  }
+
+  private untrackRuntime(taskId: string, runtime: AppServerRuntime): void {
+    if (this.activeRuntimes.get(taskId) === runtime) {
+      this.activeRuntimes.delete(taskId);
+    }
+  }
+
+  async analyze(taskId: string): Promise<RepairPlan> {
+    let task = this.requireTask(taskId);
+    if (task.status === "DRAFT") {
+      this.workflow.transitionTask(taskId, "PREPARING_WORKSPACE");
+      task = this.requireTask(taskId);
+    }
+    if (task.status === "PREPARING_WORKSPACE") {
+      await this.prepareWorktree(taskId);
+    }
+    this.workflow.transitionTask(taskId, "ANALYZING");
+
+    try {
+      const project = this.projects.get(task.projectId);
+      if (!project) {
+        throw new Error("Project not found");
+      }
+      const contract = this.tasks.getContract(taskId);
+      if (!contract) {
+        throw new Error("Task contract not found");
+      }
+      const worktree = this.worktrees.getByTaskId(taskId);
+      if (!worktree || worktree.status !== "READY") {
+        throw new Error("Worktree not ready");
+      }
+
+    const runtime = new AppServerRuntime({
+      codexBin: this.codexBin,
+      cwd: worktree.path,
+      approvalMode: "decline",
+    }).start();
+    this.trackRuntime(taskId, runtime);
+    runtime.onServerRequest = async (message) => {
+        if (message.method === "item/tool/requestUserInput") {
+          const params = (message.params ?? {}) as {
+            threadId?: string;
+            turnId?: string;
+            itemId?: string;
+            questions?: ClarificationQuestion[];
+          };
+          const answers = await this.clarifications.request({
+            taskId,
+            requestId: message.id!,
+            threadId: params.threadId ?? runtime.currentThreadId,
+            turnId: params.turnId ?? runtime.currentTurnId,
+            itemId: params.itemId ?? null,
+            questions: params.questions ?? [],
+          });
+          return { answers };
+        }
+        return undefined;
+      };
+      const detach = new RuntimeEventRecorder(
+        this.events,
+        taskId,
+      ).attach(runtime);
+
+      try {
+      await runtime.initialize({
+        name: "bugfix-harness",
+        title: "Bugfix Harness",
+        version: "0.1.0",
+      });
+      await runtime.startThread({
+        cwd: worktree.path,
+        sandbox: "read-only",
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        ephemeral: false,
+      });
+      await runtime.startTurn({
+        threadId: runtime.currentThreadId!,
+        input: [{ type: "text", text: buildAnalyzePrompt(contract) }],
+        outputSchema: planOutputSchema,
+        planMode: true,
+      });
+      await runtime.waitForTurnCompletion(this.analysisTimeoutMs);
+
+      const plan = planSchema.parse(JSON.parse(stripCodeFences(runtime.getAgentText())));
+      this.workflow.submitPlan(taskId, plan);
+      this.sessions.create({
+        taskId,
+        codexThreadId: runtime.currentThreadId!,
+      });
+      return plan;
+      } finally {
+        this.untrackRuntime(taskId, runtime);
+        detach();
+        runtime.close();
+      }
+    } catch (error) {
+      if (this.tasks.get(taskId)?.status === "ANALYZING") {
+        this.workflow.transitionTask(taskId, "FAILED");
+      }
+      throw error;
+    }
+  }
+
+  async implement(taskId: string, validationFeedback?: string): Promise<string> {
+    const task = this.requireTask(taskId);
+    if (task.status !== "IMPLEMENTING") {
+      throw new Error(`Expected task status IMPLEMENTING, got ${task.status}`);
+    }
+    const contract = this.tasks.getContract(taskId);
+    if (!contract) {
+      throw new Error("Task contract not found");
+    }
+    const planApproval = this.plans.getLatest(taskId);
+    if (!planApproval || planApproval.status !== "APPROVED") {
+      throw new Error("No approved repair plan");
+    }
+    const worktree = this.worktrees.getByTaskId(taskId);
+    if (!worktree || worktree.status !== "READY") {
+      throw new Error("Worktree not ready");
+    }
+    const session = this.sessions.getLatest(taskId);
+    if (!session) {
+      throw new Error("No analysis session");
+    }
+
+    const runtime = new AppServerRuntime({
+      codexBin: this.codexBin,
+      cwd: worktree.path,
+      approvalMode: "decline",
+    }).start();
+    this.trackRuntime(taskId, runtime);
+    const detach = new RuntimeEventRecorder(
+      this.events,
+      taskId,
+    ).attach(runtime);
+
+    try {
+      await runtime.initialize({
+        name: "bugfix-harness",
+        title: "Bugfix Harness",
+        version: "0.1.0",
+      });
+      await runtime.resumeThread(session.codexThreadId, {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+      });
+      await runtime.startTurn({
+        threadId: session.codexThreadId,
+        input: [
+          {
+            type: "text",
+            text: buildImplementPrompt(
+              contract,
+              planApproval.content,
+              validationFeedback,
+            ),
+          },
+        ],
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: [worktree.path],
+          networkAccess: false,
+          excludeTmpdirEnvVar: false,
+          excludeSlashTmp: false,
+        },
+      });
+      await runtime.waitForTurnCompletion();
+      const output = runtime.getAgentText();
+      this.workflow.transitionTask(taskId, "VALIDATING");
+      void this.execution.runValidations(taskId).catch((error) => {
+        console.error(
+          `Auto-validation failed for task ${taskId}:`,
+          (error as Error).message,
+        );
+      });
+      return output;
+    } catch (error) {
+      if (this.tasks.get(taskId)?.status === "IMPLEMENTING") {
+        this.workflow.transitionTask(taskId, "FAILED");
+      }
+      throw error;
+    } finally {
+      this.untrackRuntime(taskId, runtime);
+      detach();
+      runtime.close();
+    }
+  }
+
+  async askPlanQuestion(taskId: string, question: string): Promise<string> {
+    const task = this.requireTask(taskId);
+    if (task.status !== "WAITING_FOR_PLAN_APPROVAL") {
+      throw new Error(
+        `Expected task status WAITING_FOR_PLAN_APPROVAL, got ${task.status}`,
+      );
+    }
+
+    const contract = this.tasks.getContract(taskId);
+    if (!contract) {
+      throw new Error("Task contract not found");
+    }
+    const planApproval = this.plans.getLatest(taskId);
+    if (!planApproval || planApproval.status !== "PENDING") {
+      throw new Error("No pending repair plan");
+    }
+    const worktree = this.worktrees.getByTaskId(taskId);
+    if (!worktree || worktree.status !== "READY") {
+      throw new Error("Worktree not ready");
+    }
+    const session = this.sessions.getLatest(taskId);
+    if (!session) {
+      throw new Error("No analysis session");
+    }
+
+    const runtime = new AppServerRuntime({
+      codexBin: this.codexBin,
+      cwd: worktree.path,
+      approvalMode: "decline",
+    }).start();
+    this.trackRuntime(taskId, runtime);
+    const detach = new RuntimeEventRecorder(this.events, taskId).attach(runtime);
+
+    try {
+      await runtime.initialize({
+        name: "bugfix-harness",
+        title: "Bugfix Harness",
+        version: "0.1.0",
+      });
+      await runtime.resumeThread(session.codexThreadId, {
+        approvalPolicy: "never",
+        approvalsReviewer: "auto-review",
+      });
+      await runtime.startTurn({
+        threadId: session.codexThreadId,
+        input: [
+          {
+            type: "text",
+            text: buildPlanQuestionPrompt(
+              contract,
+              planApproval.content,
+              question.trim(),
+            ),
+          },
+        ],
+        approvalPolicy: "never",
+        approvalsReviewer: "auto-review",
+      });
+      await runtime.waitForTurnCompletion(null);
+      return runtime.getAgentText();
+    } finally {
+      this.untrackRuntime(taskId, runtime);
+      detach();
+      runtime.close();
+    }
+  }
+
+  private requireTask(taskId: string) {
+    const task = this.tasks.get(taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+    return task;
+  }
+}

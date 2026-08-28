@@ -1,0 +1,99 @@
+import { execFile } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+
+export interface WorktreeCreationInput {
+  taskId: string;
+  repoPath: string;
+  root: string;
+}
+
+export interface WorktreeCreationResult {
+  path: string;
+  baseCommit: string;
+  branch: string;
+}
+
+export class GitWorktreeManager {
+  async validateRepository(repoPath: string): Promise<void> {
+    const { stdout } = await execFileAsync("git", [
+      "-C",
+      repoPath,
+      "rev-parse",
+      "--is-inside-work-tree",
+    ]);
+    if (stdout.trim() !== "true") {
+      throw new Error(`Not a Git work tree: ${repoPath}`);
+    }
+  }
+
+  async readBaseCommit(repoPath: string): Promise<string> {
+    const { stdout } = await execFileAsync("git", [
+      "-C",
+      repoPath,
+      "rev-parse",
+      "HEAD",
+    ]);
+    return stdout.trim();
+  }
+
+  async create(input: WorktreeCreationInput): Promise<WorktreeCreationResult> {
+    await this.validateRepository(input.repoPath);
+    const baseCommit = await this.readBaseCommit(input.repoPath);
+    const path = join(input.root, input.taskId);
+    const branch = `harness/${input.taskId}`;
+
+    if (existsSync(path)) {
+      throw new Error(`Worktree path already exists: ${path}`);
+    }
+
+    try {
+      await execFileAsync("git", [
+        "-C",
+        input.repoPath,
+        "worktree",
+        "add",
+        "-b",
+        branch,
+        path,
+        baseCommit,
+      ]);
+    } catch (error) {
+      await this.cleanupIncomplete(input.repoPath, path);
+      throw new Error(
+        `Failed to create worktree: ${(error as Error).message}`,
+      );
+    }
+
+    return { path, baseCommit, branch };
+  }
+
+  async cleanupIncomplete(repoPath: string, path: string): Promise<void> {
+    if (existsSync(path)) {
+      rmSync(path, { recursive: true, force: true });
+    }
+    try {
+      await execFileAsync("git", ["-C", repoPath, "worktree", "prune"]);
+    } catch {
+      // Keep the original failure. Cleanup is best-effort.
+    }
+  }
+
+  async remove(repoPath: string, path: string): Promise<void> {
+    try {
+      await execFileAsync("git", [
+        "-C",
+        repoPath,
+        "worktree",
+        "remove",
+        "--force",
+        path,
+      ]);
+    } finally {
+      await execFileAsync("git", ["-C", repoPath, "worktree", "prune"]);
+    }
+  }
+}

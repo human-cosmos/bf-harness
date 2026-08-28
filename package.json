@@ -1,0 +1,29 @@
+{
+  "name": "bugfix-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "e2e": "playwright test",
+    "e2e:install": "playwright install chromium",
+    "accept:e2e": "pnpm --filter @bugfix-harness/server accept:e2e",
+    "accept:unit": "pnpm --filter @bugfix-harness/server accept:unit",
+    "accept:crash": "pnpm --filter @bugfix-harness/server accept:crash",
+    "dev:server": "pnpm --filter @bugfix-harness/server dev",
+    "dev:web": "pnpm --filter @bugfix-harness/web dev",
+    "services:start": "node scripts/services.mjs start",
+    "services:stop": "node scripts/services.mjs stop",
+    "services:restart": "node scripts/services.mjs restart",
+    "services:status": "node scripts/services.mjs status"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.0"
+  },
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24"
+  }
+}
