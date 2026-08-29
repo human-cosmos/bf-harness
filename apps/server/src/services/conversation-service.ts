@@ -6,6 +6,8 @@ import {
   updateConversationInputSchema,
   type Conversation,
   type ConversationEventKind,
+  type ConversationItemType,
+  type ConversationTurnStatus,
   type CreateConversationInput,
   type SendConversationMessageInput,
   type UpdateConversationInput,
@@ -359,6 +361,94 @@ export class ConversationService {
     return this.events.listByConversation(conversationId, options);
   }
 
+  async syncConversationHistory(
+    conversationId: string,
+  ): Promise<{ turns: number; items: number }> {
+    const conversation = this.requireConversation(conversationId);
+    const project = this.options.projects.get(conversation.projectId);
+    if (!project) throw new Error("Project not found");
+    const runtime = await this.runtimeManager.getOrCreate(
+      conversationId,
+      conversation,
+      project.repoPath,
+    );
+    const threadId = conversation.codexThreadId ?? runtime.currentThreadId;
+    if (!threadId) {
+      return { turns: 0, items: 0 };
+    }
+
+    const turnsResult = (await runtime.listTurns(threadId, { limit: 200 })) as {
+      turns?: Array<Record<string, unknown>>;
+    };
+    const turns = Array.isArray(turnsResult?.turns)
+      ? turnsResult.turns
+      : [];
+    let turnCount = 0;
+    let itemCount = 0;
+
+    for (const rawTurn of turns) {
+      const codexTurnId = String(rawTurn.id ?? "");
+      if (!codexTurnId) continue;
+
+      let storedTurn = this.turns.getByCodexTurnId(
+        conversationId,
+        codexTurnId,
+      );
+      if (!storedTurn) {
+        storedTurn = this.turns.create({
+          conversationId,
+          codexTurnId,
+          status: this.normalizeTurnStatus(rawTurn.status),
+          model: rawTurn.model ? String(rawTurn.model) : undefined,
+          effort: rawTurn.effort ? String(rawTurn.effort) : undefined,
+          startedAtMs: rawTurn.startedAt
+            ? Number(rawTurn.startedAt) * 1000
+            : undefined,
+        });
+        turnCount += 1;
+      } else {
+        this.turns.update(storedTurn.id, {
+          status: this.normalizeTurnStatus(rawTurn.status),
+          completedAtMs: rawTurn.completedAt
+            ? Number(rawTurn.completedAt) * 1000
+            : undefined,
+          durationMs: rawTurn.durationMs
+            ? Number(rawTurn.durationMs)
+            : undefined,
+        });
+      }
+
+      const itemsResult = (await runtime.listItems(threadId, {
+        turnId: codexTurnId,
+        limit: 1000,
+      })) as { items?: Array<Record<string, unknown>> };
+      const items = Array.isArray(itemsResult?.items) ? itemsResult.items : [];
+
+      for (const rawItem of items) {
+        const codexItemId = String(rawItem.id ?? "");
+        const itemType = this.normalizeItemType(rawItem);
+        if (!codexItemId || !itemType) continue;
+        if (this.items.getByCodexItemId(conversationId, codexItemId)) {
+          continue;
+        }
+        this.items.create({
+          conversationId,
+          codexTurnId,
+          codexItemId,
+          itemType,
+          role: this.roleForItem(rawItem),
+          author: rawItem.author ? String(rawItem.author) : null,
+          title: rawItem.title ? String(rawItem.title) : null,
+          status: rawItem.status ? String(rawItem.status) : null,
+          payload: rawItem,
+        });
+        itemCount += 1;
+      }
+    }
+
+    return { turns: turnCount, items: itemCount };
+  }
+
   getPendingApprovals(conversationId: string) {
     return this.approvals.listByConversation(conversationId, {
       pendingOnly: true,
@@ -497,5 +587,43 @@ export class ConversationService {
       throw new Error("Conversation not found");
     }
     return conversation;
+  }
+
+  private normalizeTurnStatus(
+    value: unknown,
+  ): ConversationTurnStatus {
+    const raw = String(value ?? "").toLowerCase();
+    if (raw === "completed") return "COMPLETED";
+    if (raw === "failed") return "FAILED";
+    if (raw === "interrupted") return "INTERRUPTED";
+    if (raw === "cancelled" || raw === "canceled") return "CANCELLED";
+    return "RUNNING";
+  }
+
+  private normalizeItemType(
+    item: Record<string, unknown>,
+  ): ConversationItemType | null {
+    const raw = String(item.type ?? "");
+    const map: Record<string, ConversationItemType> = {
+      agentMessage: "agentMessage",
+      userMessage: "userMessage",
+      reasoning: "reasoning",
+      plan: "plan",
+      commandExecution: "commandExecution",
+      fileChange: "fileChange",
+      mcpToolCall: "mcpToolCall",
+      dynamicToolCall: "dynamicToolCall",
+      webSearch: "webSearch",
+      imageGeneration: "imageGeneration",
+      contextCompaction: "contextCompaction",
+    };
+    return map[raw] ?? null;
+  }
+
+  private roleForItem(item: Record<string, unknown>): string | null {
+    if (item.role) return String(item.role);
+    if (item.type === "agentMessage") return "assistant";
+    if (item.type === "userMessage") return "user";
+    return null;
   }
 }

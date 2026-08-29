@@ -554,6 +554,10 @@ export const api = {
     request<ConversationItem[]>(
       `/api/conversations/${id}/items?afterSeq=${afterSeq}&limit=${limit}`,
     ),
+  syncConversation: (id: string) =>
+    request<{ turns: number; items: number }>(`/api/conversations/${id}/sync`, {
+      method: "POST",
+    }),
   listConversationModels: (id: string) =>
     request<unknown>(`/api/conversations/${id}/models`),
   listConversationApprovals: (id: string) =>

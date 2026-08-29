@@ -409,6 +409,15 @@ export async function buildApp(service: BugfixService) {
     });
   });
 
+  app.post("/api/conversations/:id/sync", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.syncConversationHistory(id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
   app.get("/api/conversations/:id/models", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {

@@ -595,9 +595,16 @@ export function ConversationPage() {
   async function load() {
     if (!conversationId) return;
     try {
-      const [nextConversation, nextItems, nextEvents, nextApprovals, nextClarification] =
+      const nextConversation = await api.getConversation(conversationId);
+      if (nextConversation.codexThreadId) {
+        try {
+          await api.syncConversation(conversationId);
+        } catch {
+          // Sync is best-effort; local DB history remains authoritative.
+        }
+      }
+      const [nextItems, nextEvents, nextApprovals, nextClarification] =
         await Promise.all([
-          api.getConversation(conversationId),
           api.listConversationItems(conversationId),
           api.listConversationEvents(conversationId),
           api.listConversationApprovals(conversationId),

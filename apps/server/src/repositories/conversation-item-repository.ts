@@ -109,6 +109,20 @@ export class ConversationItemRepository {
       : undefined;
   }
 
+  getByCodexItemId(
+    conversationId: string,
+    codexItemId: string,
+  ): ConversationItem | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM conversation_items WHERE conversation_id = ? AND codex_item_id = ? LIMIT 1",
+      )
+      .get(conversationId, codexItemId);
+    return row
+      ? rowToItem(row as unknown as Record<string, unknown>)
+      : undefined;
+  }
+
   listByConversation(
     conversationId: string,
     options: { afterSeq?: number; limit?: number } = {},
