@@ -442,24 +442,92 @@ export function Loading({ children }: { children?: ReactNode }) {
   );
 }
 
+type DiffRow =
+  | { type: "meta"; content: string }
+  | { type: "hunk"; content: string }
+  | { type: "add"; oldNo: null; newNo: number; content: string }
+  | { type: "del"; oldNo: number; newNo: null; content: string }
+  | { type: "context"; oldNo: number; newNo: number; content: string };
+
+function parseUnifiedDiff(value: string): DiffRow[] {
+  const rows: DiffRow[] = [];
+  let oldNo = 0;
+  let newNo = 0;
+
+  for (const raw of value.split("\n")) {
+    if (raw.startsWith("@@")) {
+      const match = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        oldNo = Number(match[1]);
+        newNo = Number(match[2]);
+      }
+      rows.push({ type: "hunk", content: raw });
+      continue;
+    }
+
+    const isMeta =
+      raw.startsWith("+++") ||
+      raw.startsWith("---") ||
+      raw.startsWith("diff ") ||
+      raw.startsWith("index ") ||
+      raw.startsWith("new file") ||
+      raw.startsWith("deleted file") ||
+      raw.startsWith("rename ") ||
+      raw.startsWith("similarity") ||
+      raw.startsWith("old mode") ||
+      raw.startsWith("new mode") ||
+      raw.startsWith("Binary files") ||
+      raw.startsWith("\\ No newline") ||
+      raw === "";
+    if (isMeta) {
+      rows.push({ type: "meta", content: raw });
+      continue;
+    }
+
+    if (raw.startsWith("+")) {
+      rows.push({ type: "add", oldNo: null, newNo, content: raw.slice(1) });
+      newNo += 1;
+      continue;
+    }
+
+    if (raw.startsWith("-")) {
+      rows.push({ type: "del", oldNo, newNo: null, content: raw.slice(1) });
+      oldNo += 1;
+      continue;
+    }
+
+    const content = raw.startsWith(" ") ? raw.slice(1) : raw;
+    rows.push({ type: "context", oldNo, newNo, content });
+    oldNo += 1;
+    newNo += 1;
+  }
+
+  return rows;
+}
+
 function DiffBlock({ value }: { value: string }) {
-  const rows = value.split("\n");
+  const rows = useMemo(() => parseUnifiedDiff(value), [value]);
   return (
     <div className="diff" role="region" aria-label="代码差异">
-      {rows.map((line, index) => {
-        const cls =
-          line.startsWith("+++") || line.startsWith("---")
-            ? "diff-meta"
-            : line.startsWith("@@")
-              ? "diff-hunk"
-              : line.startsWith("+")
-                ? "diff-add"
-                : line.startsWith("-")
-                  ? "diff-del"
-                  : "";
+      {rows.map((row, index) => {
+        if (row.type === "hunk" || row.type === "meta") {
+          return (
+            <div
+              key={index}
+              className={`diff-line ${row.type === "hunk" ? "diff-hunk" : "diff-meta"}`}
+            >
+              <span className="diff-line-full">{row.content || " "}</span>
+            </div>
+          );
+        }
+        const cls = row.type === "add" ? "diff-add" : row.type === "del" ? "diff-del" : "";
+        const sign = row.type === "add" ? "+" : row.type === "del" ? "-" : "";
         return (
-          <div key={index} className={`diff-line${cls ? ` ${cls}` : ""}`}>
-            {line || "\u00A0"}
+          <div key={index} className={`diff-line ${cls}`}>
+            <span className="diff-line-num">{row.oldNo ?? ""}</span>
+            <span className="diff-line-num">{row.newNo ?? ""}</span>
+            <span className="diff-line-sign">{sign}</span>
+            <span className="diff-line-code">{row.content || " "}</span>
           </div>
         );
       })}
@@ -797,7 +865,16 @@ export function Layout() {
         <div className="topbar-inner">
           <Link to="/" className="brand" aria-label="Bugfix Harness 首页">
             <span className="brand-mark" aria-hidden="true">
-              B
+              <svg viewBox="0 0 24 24" width="15" height="15">
+                <rect x="2" y="6" width="20" height="4.6" rx="2.3" fill="var(--add)" />
+                <rect x="2" y="13.4" width="20" height="4.6" rx="2.3" fill="var(--del)" />
+                <path
+                  d="M8.5 8.3h2.4M7.3 7.1v2.4M8.5 15.7h2.4"
+                  stroke="#fff"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                />
+              </svg>
             </span>
             <span className="brand-name">Bugfix Harness</span>
           </Link>
