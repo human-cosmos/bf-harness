@@ -41,7 +41,7 @@ function titleForPath(pathname: string) {
 function DocumentTitle() {
   const location = useLocation();
   useEffect(() => {
-    document.title = `${titleForPath(location.pathname)} · Bugfix Harness`;
+    document.title = `${titleForPath(location.pathname)} · bf-harness`;
   }, [location.pathname]);
   return null;
 }

@@ -1,5 +1,5 @@
 /*
- * Bugfix Harness — "Patch Console"
+ * bf-harness — "Patch Console"
  *
  * A review instrument for code changes. The only saturated colors carry
  * meaning: green = added/passed, red = removed/failed, amber = needs

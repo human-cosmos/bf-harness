@@ -930,7 +930,7 @@ export function Layout() {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-inner">
-          <Link to="/" className="brand" aria-label="Bugfix Harness 首页">
+          <Link to="/" className="brand" aria-label="bf-harness 首页">
             <span className="brand-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="15" height="15">
                 <rect x="2" y="6" width="20" height="4.6" rx="2.3" fill="var(--add)" />
@@ -943,7 +943,7 @@ export function Layout() {
                 />
               </svg>
             </span>
-            <span className="brand-name">Bugfix Harness</span>
+            <span className="brand-name">bf-harness</span>
           </Link>
           <nav className="topnav" aria-label="主导航">
             <NavLink
