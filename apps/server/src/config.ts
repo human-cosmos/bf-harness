@@ -16,6 +16,9 @@ export interface AppConfig {
   host: string;
   codexBin: string;
   analysisTimeoutMs: number;
+  implementationTimeoutMs: number;
+  analysisMaxTimeoutMs: number | null;
+  implementationMaxTimeoutMs: number | null;
 }
 
 export function loadConfig(): AppConfig {
@@ -33,5 +36,22 @@ export function loadConfig(): AppConfig {
     analysisTimeoutMs: Number(
       process.env.BUGFIX_HARNESS_ANALYSIS_TIMEOUT_MS ?? 600_000,
     ),
+    implementationTimeoutMs: Number(
+      process.env.BUGFIX_HARNESS_IMPLEMENTATION_TIMEOUT_MS ?? 600_000,
+    ),
+    analysisMaxTimeoutMs: optionalPositiveNumber(
+      process.env.BUGFIX_HARNESS_ANALYSIS_MAX_DURATION_MS,
+    ),
+    implementationMaxTimeoutMs: optionalPositiveNumber(
+      process.env.BUGFIX_HARNESS_IMPLEMENTATION_MAX_DURATION_MS,
+    ),
   };
+}
+
+function optionalPositiveNumber(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }

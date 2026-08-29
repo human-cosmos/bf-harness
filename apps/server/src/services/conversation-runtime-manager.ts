@@ -33,7 +33,7 @@ export class ConversationRuntimeManager {
       codexBin: this.options.codexBin ?? process.env.CODEX_BIN,
       cwd: projectRoot,
       approvalMode: "decline",
-      timeoutMs: Number(
+      turnIdleTimeoutMs: Number(
         process.env.BUGFIX_HARNESS_CONVERSATION_TIMEOUT_MS ?? 600_000,
       ),
     }).start();

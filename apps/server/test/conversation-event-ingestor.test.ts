@@ -123,4 +123,65 @@ describe("ConversationEventIngestor", () => {
     expect(stored[0].status).toBe("completed");
     detach();
   });
+
+  it("does not persist a Codex user message that duplicates the local copy", () => {
+    const db = openDatabase(":memory:");
+    const project = new ProjectRepository(db).create({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: [],
+      validationCommands: [],
+      allowedPaths: [],
+      forbiddenPaths: [],
+    });
+    const conversation = new ConversationRepository(db).create({
+      projectId: project.id,
+      title: "测试对话",
+    });
+    const events = new ConversationEventRepository(db);
+    const items = new ConversationItemRepository(db);
+
+    items.create({
+      conversationId: conversation.id,
+      itemType: "userMessage",
+      role: "user",
+      payload: {
+        text: "你好",
+        mentions: [{ name: "app.ts", path: "/tmp/demo/app.ts" }],
+      },
+    });
+
+    const runtime = makeRuntime();
+    (runtime as AppServerRuntime).currentThreadId = "thread-1";
+    (runtime as AppServerRuntime).currentTurnId = "turn-1";
+    const ingestor = new ConversationEventIngestor(
+      events,
+      items,
+      conversation.id,
+    );
+    const detach = ingestor.attach(runtime);
+
+    runtime.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "codex-user-item",
+        item: {
+          id: "codex-user-item",
+          type: "userMessage",
+          content: [
+            { type: "text", text: "你好", text_elements: [] },
+            { type: "mention", name: "app.ts", path: "/tmp/demo/app.ts" },
+          ],
+        },
+      },
+    });
+
+    const stored = items.listByConversation(conversation.id);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].itemType).toBe("userMessage");
+    expect(stored[0].codexItemId).toBeNull();
+    detach();
+  });
 });

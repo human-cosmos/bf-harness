@@ -1,4 +1,5 @@
 import type {
+  ConversationItem,
   ConversationEventKind,
   ConversationItemType,
 } from "@bugfix-harness/shared";
@@ -51,12 +52,19 @@ function itemTypeForMethod(method: string): ConversationItemType | null {
 
 export class ConversationEventIngestor {
   private readonly itemByCodexId = new Map<string, string>();
+  private readonly localUserMessages: ConversationItem[];
 
   constructor(
     private readonly events: ConversationEventRepository,
     private readonly items: ConversationItemRepository,
     private readonly conversationId: string,
-  ) {}
+  ) {
+    this.localUserMessages = this.items
+      .listByConversation(conversationId, { limit: 1000 })
+      .filter(
+        (item) => item.itemType === "userMessage" && !item.codexItemId,
+      );
+  }
 
   attach(runtime: AppServerRuntime): () => void {
     const listener = (notification: Notification) => {
@@ -104,6 +112,12 @@ export class ConversationEventIngestor {
       const codexItem = data.item as Record<string, unknown> | undefined;
       const type = this.normalizeItemType(codexItem);
       if (!type || !itemId) return;
+      if (
+        type === "userMessage" &&
+        this.isDuplicateLocalUserMessage(codexItem)
+      ) {
+        return;
+      }
       const created = this.items.create({
         conversationId: this.conversationId,
         codexTurnId: turnId,
@@ -129,7 +143,14 @@ export class ConversationEventIngestor {
           payload: codexItem ?? data,
           completedAtMs: Date.now(),
         });
-      } else if (type && itemId) {
+      } else if (
+        type &&
+        itemId &&
+        !(
+          type === "userMessage" &&
+          this.isDuplicateLocalUserMessage(codexItem)
+        )
+      ) {
         const created = this.items.create({
           conversationId: this.conversationId,
           codexTurnId: turnId,
@@ -190,6 +211,84 @@ export class ConversationEventIngestor {
       tokenUsage: "tokenUsage",
     };
     return aliases[raw] ?? null;
+  }
+
+  private isDuplicateLocalUserMessage(
+    codexItem: Record<string, unknown> | undefined,
+  ): boolean {
+    const codexIdentity = this.userMessageIdentity(codexItem);
+    if (!codexIdentity) return false;
+    return this.localUserMessages.some(
+      (item) =>
+        this.userMessageIdentity(
+          item.payload as Record<string, unknown> | undefined,
+        ) === codexIdentity,
+    );
+  }
+
+  private userMessageIdentity(
+    payload: Record<string, unknown> | undefined,
+  ): string {
+    const text = this.textFromPayload(payload).trim();
+    const mentions = this.mentionsFromPayload(payload)
+      .map((mention) => `${mention.name}\u0000${mention.path}`)
+      .sort();
+    return JSON.stringify({ text, mentions });
+  }
+
+  private textFromPayload(
+    payload: Record<string, unknown> | undefined,
+  ): string {
+    if (typeof payload?.text === "string") return payload.text;
+    return this.contentParts(payload)
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (
+          part &&
+          typeof part === "object" &&
+          typeof (part as Record<string, unknown>).text === "string"
+        ) {
+          return (part as Record<string, unknown>).text as string;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private mentionsFromPayload(
+    payload: Record<string, unknown> | undefined,
+  ): Array<{ name: string; path: string }> {
+    if (Array.isArray(payload?.mentions)) {
+      return payload.mentions.flatMap((mention) => {
+        if (!mention || typeof mention !== "object") return [];
+        const record = mention as Record<string, unknown>;
+        return typeof record.name === "string" &&
+          typeof record.path === "string"
+          ? [{ name: record.name, path: record.path }]
+          : [];
+      });
+    }
+
+    return this.contentParts(payload).flatMap((part) => {
+      if (!part || typeof part !== "object") return [];
+      const record = part as Record<string, unknown>;
+      const type = record.type;
+      if (
+        type === "mention" &&
+        typeof record.name === "string" &&
+        typeof record.path === "string"
+      ) {
+        return [{ name: record.name, path: record.path }];
+      }
+      return [];
+    });
+  }
+
+  private contentParts(
+    payload: Record<string, unknown> | undefined,
+  ): unknown[] {
+    return Array.isArray(payload?.content) ? payload.content : [];
   }
 
   private roleForItem(item: Record<string, unknown> | undefined): string | null {

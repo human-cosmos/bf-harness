@@ -19,6 +19,7 @@ import {
   ConversationListPage as ChatListPage,
   ConversationPage as ChatPage,
 } from "./conversation-pages.js";
+import { TaskLogsPage } from "./task-logs-page.js";
 
 function titleForPath(pathname: string) {
   if (pathname === "/") return "本地项目";
@@ -83,6 +84,7 @@ export function App() {
           <Route path="/tasks/:id/approvals" element={<ApprovalsPage />} />
           <Route path="/tasks/:id/diff" element={<DiffPage />} />
           <Route path="/tasks/:id/report" element={<ReportPage />} />
+          <Route path="/tasks/:id/logs" element={<TaskLogsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Route>

@@ -192,6 +192,44 @@ export interface WorkflowState {
   jobs: BackgroundJob[];
 }
 
+export type TaskLogLevel = "debug" | "info" | "warn" | "error";
+export type TaskLogSource =
+  | "runtime"
+  | "workflow"
+  | "validation"
+  | "approval"
+  | "server";
+export type TaskLogPhase =
+  | "prepare"
+  | "analyze"
+  | "plan"
+  | "implement"
+  | "validate"
+  | "report"
+  | "lifecycle";
+
+export interface TaskLogEntry {
+  id: number;
+  taskId: string;
+  seq: number;
+  level: TaskLogLevel;
+  source: TaskLogSource;
+  phase: TaskLogPhase;
+  method: string;
+  message: string;
+  payload: unknown;
+  codexThreadId: string | null;
+  codexTurnId: string | null;
+  codexItemId: string | null;
+  emittedAtMs: number | null;
+  createdAt: string;
+}
+
+export interface TaskLogsResponse {
+  items: TaskLogEntry[];
+  nextAfterSeq: number | null;
+}
+
 export interface PromptTemplateSetting {
   key: PromptTemplateKey;
   label: string;
@@ -466,6 +504,27 @@ export const api = {
     }),
   listEvents: (id: string, limit = 100, afterSeq = 0) =>
     request<any[]>(`/api/tasks/${id}/events?limit=${limit}&afterSeq=${afterSeq}`),
+  listTaskLogs: (
+    id: string,
+    options: {
+      afterSeq?: number;
+      limit?: number;
+      level?: TaskLogLevel;
+      source?: TaskLogSource;
+      phase?: TaskLogPhase;
+    } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (options.afterSeq) search.set("afterSeq", String(options.afterSeq));
+    if (options.limit) search.set("limit", String(options.limit));
+    if (options.level) search.set("level", options.level);
+    if (options.source) search.set("source", options.source);
+    if (options.phase) search.set("phase", options.phase);
+    const query = search.toString();
+    return request<TaskLogsResponse>(
+      `/api/tasks/${id}/logs${query ? `?${query}` : ""}`,
+    );
+  },
   diagnostics: () => request<Record<string, unknown>>("/api/diagnostics"),
   getPromptTemplates: () =>
     request<PromptTemplateSetting[]>("/api/settings/prompts"),

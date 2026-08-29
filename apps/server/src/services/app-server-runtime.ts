@@ -16,6 +16,8 @@ export interface AppServerRuntimeOptions {
   cwd?: string;
   approvalMode?: "decline" | "accept";
   timeoutMs?: number;
+  turnIdleTimeoutMs?: number | null;
+  turnMaxTimeoutMs?: number | null;
   log?: (label: string, value?: unknown) => void;
 }
 
@@ -59,6 +61,11 @@ export interface TurnCompletion {
   turn?: { id?: string; status?: string };
 }
 
+export interface TurnCompletionWaitOptions {
+  idleTimeoutMs?: number | null;
+  maxTimeoutMs?: number | null;
+}
+
 export class AppServerRuntime extends EventEmitter {
   private child: ChildProcess | null = null;
   private nextRequestId = 1;
@@ -76,9 +83,22 @@ export class AppServerRuntime extends EventEmitter {
   private exitInfo: { code: number | null; signal: NodeJS.Signals | null } | null =
     null;
   private spawnError: Error | null = null;
+  private readonly pendingServerRequestIds = new Set<number>();
+  private turnActiveStartedAt: number | null = null;
+  private turnWaitingStartedAt: number | null = null;
+  private turnAccumulatedActiveMs = 0;
+  private lastTurnActivityAt = 0;
 
   readonly options: Required<
-    Pick<AppServerRuntimeOptions, "codexBin" | "cwd" | "approvalMode" | "timeoutMs">
+    Pick<
+      AppServerRuntimeOptions,
+      | "codexBin"
+      | "cwd"
+      | "approvalMode"
+      | "timeoutMs"
+      | "turnIdleTimeoutMs"
+      | "turnMaxTimeoutMs"
+    >
   > & { log: NonNullable<AppServerRuntimeOptions["log"]> };
 
   currentThreadId: string | null = null;
@@ -105,6 +125,9 @@ export class AppServerRuntime extends EventEmitter {
       cwd: options.cwd ?? process.cwd(),
       approvalMode: options.approvalMode ?? "decline",
       timeoutMs: options.timeoutMs ?? 120_000,
+      turnIdleTimeoutMs:
+        options.turnIdleTimeoutMs ?? options.timeoutMs ?? 120_000,
+      turnMaxTimeoutMs: options.turnMaxTimeoutMs ?? null,
       log: options.log ?? (() => {}),
     };
   }
@@ -242,6 +265,7 @@ export class AppServerRuntime extends EventEmitter {
   async startTurn(input: TurnStartInput): Promise<unknown> {
     this.agentText = "";
     this.turnCompletions = [];
+    this.resetTurnClock();
     let collaborationMode: Record<string, unknown> | undefined;
     if (input.planMode) {
       if (!this.currentModel) {
@@ -340,6 +364,10 @@ export class AppServerRuntime extends EventEmitter {
     return this.rpc("thread/archive", { threadId });
   }
 
+  async getConversationSummary(threadId: string): Promise<unknown> {
+    return this.rpc("getConversationSummary", { conversationId: threadId });
+  }
+
   async setThreadName(threadId: string, name: string): Promise<unknown> {
     return this.rpc("thread/name/set", { threadId, name });
   }
@@ -365,9 +393,28 @@ export class AppServerRuntime extends EventEmitter {
   }
 
   async waitForTurnCompletion(
-    timeoutMs: number | null = this.options.timeoutMs,
+    timeoutOrOptions:
+      | number
+      | null
+      | TurnCompletionWaitOptions
+      | undefined,
   ): Promise<TurnCompletion> {
-    const deadline = timeoutMs === null ? null : Date.now() + timeoutMs;
+    const options: TurnCompletionWaitOptions =
+      timeoutOrOptions === undefined
+        ? {
+            idleTimeoutMs: this.options.turnIdleTimeoutMs,
+            maxTimeoutMs: this.options.turnMaxTimeoutMs,
+          }
+        : typeof timeoutOrOptions === "number" || timeoutOrOptions === null
+          ? { idleTimeoutMs: timeoutOrOptions, maxTimeoutMs: null }
+          : timeoutOrOptions;
+    const idleTimeoutMs =
+      options.idleTimeoutMs === undefined
+        ? this.options.turnIdleTimeoutMs
+        : options.idleTimeoutMs;
+    const maxTimeoutMs = options.maxTimeoutMs ?? null;
+
+    this.ensureTurnClockStarted();
     while (this.turnCompletions.length === 0) {
       if (this.spawnError) {
         throw new Error(
@@ -379,8 +426,26 @@ export class AppServerRuntime extends EventEmitter {
           `app-server exited before turn completion: ${JSON.stringify(this.exitInfo)}`,
         );
       }
-      if (deadline !== null && Date.now() > deadline) {
-        throw new Error(`turn did not complete within ${timeoutMs}ms`);
+
+      this.refreshTurnClock();
+      const waitingForServerRequest = this.pendingServerRequestIds.size > 0;
+      if (
+        !waitingForServerRequest &&
+        idleTimeoutMs !== null &&
+        this.lastTurnActivityAt > 0 &&
+        Date.now() - this.lastTurnActivityAt > idleTimeoutMs
+      ) {
+        throw new Error(
+          `turn did not complete within ${idleTimeoutMs}ms of activity`,
+        );
+      }
+      if (
+        maxTimeoutMs !== null &&
+        this.getTurnActiveElapsedMs() > maxTimeoutMs
+      ) {
+        throw new Error(
+          `turn exceeded the ${maxTimeoutMs}ms maximum active duration`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -400,6 +465,7 @@ export class AppServerRuntime extends EventEmitter {
   }
 
   private handleMessage(message: RuntimeMessage): void {
+    this.markTurnActivity();
     if (message.method && message.id !== undefined) {
       void this.handleServerRequest(message);
       return;
@@ -437,6 +503,7 @@ export class AppServerRuntime extends EventEmitter {
   }
 
   private async handleServerRequest(message: RuntimeMessage): Promise<void> {
+    this.pendingServerRequestIds.add(message.id!);
     try {
       if (this.onServerRequest) {
         const custom = await this.onServerRequest(message);
@@ -478,6 +545,9 @@ export class AppServerRuntime extends EventEmitter {
           message: (error as Error).message,
         },
       });
+    } finally {
+      this.pendingServerRequestIds.delete(message.id!);
+      this.markTurnActivity();
     }
   }
 
@@ -521,5 +591,51 @@ export class AppServerRuntime extends EventEmitter {
 
     this.emit("notification", { method, params: data });
     this.emit(method, data);
+  }
+
+  private resetTurnClock(): void {
+    const now = Date.now();
+    this.turnAccumulatedActiveMs = 0;
+    this.turnActiveStartedAt = now;
+    this.turnWaitingStartedAt = null;
+    this.lastTurnActivityAt = now;
+  }
+
+  private ensureTurnClockStarted(): void {
+    if (this.lastTurnActivityAt === 0) {
+      this.resetTurnClock();
+    }
+  }
+
+  private markTurnActivity(): void {
+    this.lastTurnActivityAt = Date.now();
+  }
+
+  private refreshTurnClock(): void {
+    const now = Date.now();
+    if (this.pendingServerRequestIds.size > 0) {
+      if (this.turnActiveStartedAt !== null) {
+        this.turnAccumulatedActiveMs += now - this.turnActiveStartedAt;
+        this.turnActiveStartedAt = null;
+      }
+      this.turnWaitingStartedAt ??= now;
+      return;
+    }
+
+    if (this.turnWaitingStartedAt !== null) {
+      this.turnWaitingStartedAt = null;
+    }
+    this.turnActiveStartedAt ??= now;
+  }
+
+  private getTurnActiveElapsedMs(now = Date.now()): number {
+    let elapsed = this.turnAccumulatedActiveMs;
+    if (
+      this.pendingServerRequestIds.size === 0 &&
+      this.turnActiveStartedAt !== null
+    ) {
+      elapsed += now - this.turnActiveStartedAt;
+    }
+    return elapsed;
   }
 }

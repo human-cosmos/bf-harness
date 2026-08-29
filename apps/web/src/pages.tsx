@@ -68,7 +68,7 @@ const DEFAULT_PROJECT_FIELDS = {
   forbiddenPaths: "node_modules/",
 };
 
-function Badge({
+export function Badge({
   tone = "neutral",
   children,
 }: {
@@ -271,7 +271,7 @@ function WarningIcon() {
   );
 }
 
-function ErrorNotice({ message }: { message: string }) {
+export function ErrorNotice({ message }: { message: string }) {
   return message ? (
     <div className="notice notice-error" role="alert">
       {message}
@@ -433,7 +433,7 @@ function ClarificationPanel({
   );
 }
 
-function Loading({ children }: { children?: ReactNode }) {
+export function Loading({ children }: { children?: ReactNode }) {
   return (
     <div className="loading" role="status">
       <span className="spinner" aria-hidden="true" />
@@ -580,7 +580,7 @@ function approvalSummary(item: Record<string, unknown>): string {
   return "AI 发起了一个操作请求";
 }
 
-function formatDate(value: string) {
+export function formatDate(value: string) {
   if (!value) return "—";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString("zh-CN");
@@ -1786,13 +1786,17 @@ export function TaskDetailPage() {
     }
   }, [latestEvent, refresh]);
 
-  async function run(action: () => Promise<unknown>, label: string) {
+  async function run(
+    action: () => Promise<unknown>,
+    label: string,
+    successMessage = `${label} 成功`,
+  ) {
     setBusy(label);
     setMessage("");
     setActionError("");
     try {
       await action();
-      setMessage(`${label} 成功`);
+      setMessage(successMessage);
       await refresh();
     } catch (err) {
       setActionError((err as Error).message);
@@ -1865,7 +1869,7 @@ export function TaskDetailPage() {
       type="button"
       className="btn btn-primary"
       disabled={Boolean(busy)}
-      onClick={() => run(() => api.analyze(id!), "开始修复")}
+      onClick={() => run(() => api.analyze(id!), "开始修复", "提交成功")}
     >
       {busy === "开始修复" ? "处理中..." : "开始修复"}
     </button>
@@ -1983,9 +1987,14 @@ export function TaskDetailPage() {
       <div className="card">
         <div className="card-head">
           <h2>实时事件</h2>
-          <Badge tone={connected ? "success" : reconnecting ? "warning" : "danger"}>
-            {connected ? "已连接" : reconnecting ? "重连中..." : "未连接"}
-          </Badge>
+          <div className="card-head-actions">
+            <Badge tone={connected ? "success" : reconnecting ? "warning" : "danger"}>
+              {connected ? "已连接" : reconnecting ? "重连中..." : "未连接"}
+            </Badge>
+            <Link to={`/tasks/${id}/logs`} className="btn">
+              运行日志
+            </Link>
+          </div>
         </div>
         {events.length === 0 ? (
           <p className="muted">暂无实时事件。</p>

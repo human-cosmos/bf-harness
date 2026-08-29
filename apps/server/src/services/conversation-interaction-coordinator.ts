@@ -13,12 +13,12 @@ export type ConversationApprovalDecision =
 
 interface ApprovalWaiter {
   resolve: (decision: ConversationApprovalDecision) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 interface ClarificationWaiter {
   resolve: (answers: Record<string, { answers: string[] }>) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 export class ConversationInteractionCoordinator {
@@ -32,7 +32,7 @@ export class ConversationInteractionCoordinator {
     private readonly events: EventBus,
     private readonly policy: ConversationPolicy,
     private readonly dynamicTools: DynamicToolRegistry,
-    private readonly timeoutMs: number = 600_000,
+    private readonly timeoutMs: number | null = null,
   ) {}
 
   async handleServerRequest(message: RuntimeMessage): Promise<unknown | undefined> {
@@ -73,7 +73,9 @@ export class ConversationInteractionCoordinator {
     const waiter = this.approvalWaiters.get(approvalId);
     if (waiter) {
       this.approvalWaiters.delete(approvalId);
-      clearTimeout(waiter.timer);
+      if (waiter.timer !== null) {
+        clearTimeout(waiter.timer);
+      }
       waiter.resolve(decision);
     }
     this.events.publish({
@@ -94,7 +96,9 @@ export class ConversationInteractionCoordinator {
     const waiter = this.clarificationWaiters.get(clarificationId);
     if (waiter) {
       this.clarificationWaiters.delete(clarificationId);
-      clearTimeout(waiter.timer);
+      if (waiter.timer !== null) {
+        clearTimeout(waiter.timer);
+      }
       waiter.resolve(answers);
     }
     this.events.publish({
@@ -108,14 +112,18 @@ export class ConversationInteractionCoordinator {
 
   cancelPending(): void {
     for (const [id, waiter] of this.approvalWaiters) {
-      clearTimeout(waiter.timer);
+      if (waiter.timer !== null) {
+        clearTimeout(waiter.timer);
+      }
       this.approvals.decide(id, "cancel");
       waiter.resolve("cancel");
     }
     this.approvalWaiters.clear();
 
     for (const [id, waiter] of this.clarificationWaiters) {
-      clearTimeout(waiter.timer);
+      if (waiter.timer !== null) {
+        clearTimeout(waiter.timer);
+      }
       this.clarifications.cancel(id);
       waiter.resolve({});
     }
@@ -246,12 +254,15 @@ export class ConversationInteractionCoordinator {
     return new Promise<ConversationApprovalDecision>((resolve) => {
       const waiter: ApprovalWaiter = {
         resolve,
-        timer: setTimeout(() => {
-          if (this.approvalWaiters.delete(approval.id)) {
-            this.approvals.decide(approval.id, "cancel");
-            resolve("cancel");
-          }
-        }, this.timeoutMs),
+        timer:
+          this.timeoutMs === null
+            ? null
+            : setTimeout(() => {
+                if (this.approvalWaiters.delete(approval.id)) {
+                  this.approvals.decide(approval.id, "cancel");
+                  resolve("cancel");
+                }
+              }, this.timeoutMs),
       };
       this.approvalWaiters.set(approval.id, waiter);
     });
@@ -279,12 +290,15 @@ export class ConversationInteractionCoordinator {
       (resolve) => {
         const waiter: ClarificationWaiter = {
           resolve,
-          timer: setTimeout(() => {
-            if (this.clarificationWaiters.delete(clarification.id)) {
-              this.clarifications.cancel(clarification.id);
-              resolve({});
-            }
-          }, this.timeoutMs),
+          timer:
+            this.timeoutMs === null
+              ? null
+              : setTimeout(() => {
+                  if (this.clarificationWaiters.delete(clarification.id)) {
+                    this.clarifications.cancel(clarification.id);
+                    resolve({});
+                  }
+                }, this.timeoutMs),
         };
         this.clarificationWaiters.set(clarification.id, waiter);
       },

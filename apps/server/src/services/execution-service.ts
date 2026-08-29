@@ -97,12 +97,18 @@ export class ExecutionService {
       }),
     );
 
-    return this.approvals.create({
+    const approval = this.approvals.create({
       taskId,
       method: request.kind,
       payload: request,
       riskLevel: decision.level,
     });
+    this.events?.publish({
+      type: "approval.requested",
+      taskId,
+      payload: { approvalId: approval.id, method: request.kind },
+    });
+    return approval;
   }
 
   async requestApprovalDecision(
@@ -136,14 +142,29 @@ export class ExecutionService {
       payload: request,
       riskLevel: decision.level,
     });
+    this.events?.publish({
+      type: "approval.requested",
+      taskId,
+      payload: { approvalId: approval.id, method: request.kind },
+    });
 
     if (decision.level === "autoAllow") {
       this.approvals.decide(approval.id, "accept");
+      this.events?.publish({
+        type: "approval.decided",
+        taskId,
+        payload: { approvalId: approval.id, decision: "accept" },
+      });
       return { decision: "accept", approvalId: approval.id };
     }
 
     if (decision.level === "deny") {
       this.approvals.decide(approval.id, "decline");
+      this.events?.publish({
+        type: "approval.decided",
+        taskId,
+        payload: { approvalId: approval.id, decision: "decline" },
+      });
       return { decision: "decline", approvalId: approval.id };
     }
 
@@ -252,7 +273,23 @@ export class ExecutionService {
       outcomes.every((outcome) => outcome.status === "passed");
     if (allPassed && task.status === "VALIDATING") {
       this.tasks.updateStatus(taskId, "WAITING_FOR_ACCEPTANCE");
+      this.events?.publish({
+        type: "task.status_changed",
+        taskId,
+        payload: { status: "WAITING_FOR_ACCEPTANCE" },
+      });
     }
+
+    this.events?.publish({
+      type: "validation.completed",
+      taskId,
+      payload: {
+        passed: outcomes.filter((outcome) => outcome.status === "passed").length,
+        failed: outcomes.filter((outcome) => outcome.status === "failed").length,
+        timeout: outcomes.filter((outcome) => outcome.status === "timeout").length,
+        skipped: outcomes.filter((outcome) => outcome.status === "skipped").length,
+      },
+    });
 
     return outcomes;
   }

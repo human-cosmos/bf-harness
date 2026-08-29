@@ -144,6 +144,12 @@ npm run validate
 | `BUGFIX_HARNESS_HOME` | `~/.bugfix-harness` | 数据、数据库和 Worktree 根目录 |
 | `BUGFIX_HARNESS_PORT` | `4317` | 后端端口 |
 | `BUGFIX_HARNESS_HOST` | `127.0.0.1` | 后端监听地址 |
+| `BUGFIX_HARNESS_ANALYSIS_TIMEOUT_MS` | `600000` | 分析阶段无活动后的空闲超时；有事件/输出会重置 |
+| `BUGFIX_HARNESS_IMPLEMENTATION_TIMEOUT_MS` | `600000` | 实施阶段无活动后的空闲超时；等待用户审批期间暂停 |
+| `BUGFIX_HARNESS_ANALYSIS_MAX_DURATION_MS` | 空 | 分析阶段累计活跃时长硬上限，默认不限 |
+| `BUGFIX_HARNESS_IMPLEMENTATION_MAX_DURATION_MS` | 空 | 实施阶段累计活跃时长硬上限，默认不限 |
+| `BUGFIX_HARNESS_CONVERSATION_TIMEOUT_MS` | `600000` | 自由对话无活动后的空闲超时 |
+| `BUGFIX_HARNESS_APPROVAL_TTL_MS` | 空 | 自由对话审批/澄清等待 TTL，默认不限，由用户或取消操作结束 |
 | `CODEX_BIN` | `codex-harness` | Codex Runtime 命令 |
 
 ## 验收

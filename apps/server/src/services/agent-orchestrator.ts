@@ -78,6 +78,9 @@ export class AgentOrchestrator {
     private readonly prepareWorktree: (taskId: string) => Promise<Worktree>,
     private readonly clarifications: ClarificationCoordinator,
     private readonly analysisTimeoutMs: number,
+    private readonly implementationTimeoutMs: number,
+    private readonly analysisMaxTimeoutMs: number | null,
+    private readonly implementationMaxTimeoutMs: number | null,
   ) {}
 
   private readonly activeRuntimes = new Map<string, AppServerRuntime>();
@@ -175,6 +178,8 @@ export class AgentOrchestrator {
       const detach = new RuntimeEventRecorder(
         this.events,
         taskId,
+        undefined,
+        "analyze",
       ).attach(runtime);
 
       try {
@@ -205,7 +210,10 @@ export class AgentOrchestrator {
         outputSchema: planOutputSchema,
         planMode: true,
       });
-      await runtime.waitForTurnCompletion(this.analysisTimeoutMs);
+      await runtime.waitForTurnCompletion({
+        idleTimeoutMs: this.analysisTimeoutMs,
+        maxTimeoutMs: this.analysisMaxTimeoutMs,
+      });
 
       const plan = planSchema.parse(JSON.parse(stripCodeFences(runtime.getAgentText())));
       this.workflow.submitPlan(taskId, plan);
@@ -268,6 +276,8 @@ export class AgentOrchestrator {
     const detach = new RuntimeEventRecorder(
       this.events,
       taskId,
+      undefined,
+      "implement",
     ).attach(runtime);
 
     runtime.onServerRequest = async (message) => {
@@ -364,7 +374,10 @@ export class AgentOrchestrator {
           excludeSlashTmp: false,
         },
       });
-      await runtime.waitForTurnCompletion();
+      await runtime.waitForTurnCompletion({
+        idleTimeoutMs: this.implementationTimeoutMs,
+        maxTimeoutMs: this.implementationMaxTimeoutMs,
+      });
       const output = runtime.getAgentText();
       this.workflow.transitionTask(taskId, "VALIDATING");
       void this.execution.runValidations(taskId).catch((error) => {
@@ -427,7 +440,12 @@ export class AgentOrchestrator {
       approvalMode: "decline",
     }).start();
     this.trackRuntime(taskId, runtime);
-    const detach = new RuntimeEventRecorder(this.events, taskId).attach(runtime);
+    const detach = new RuntimeEventRecorder(
+      this.events,
+      taskId,
+      undefined,
+      "plan",
+    ).attach(runtime);
 
     try {
       await runtime.initialize({

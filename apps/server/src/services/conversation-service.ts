@@ -36,6 +36,7 @@ export interface ConversationServiceOptions {
   eventBus?: EventBus;
   codexBin?: string;
   timeoutMs?: number;
+  approvalTimeoutMs?: number | null;
   runtimeManager?: ConversationRuntimeManager;
 }
 
@@ -75,6 +76,7 @@ export class ConversationService {
   >();
   private readonly activeTurnIds = new Set<string>();
   private readonly timeoutMs: number;
+  private readonly approvalTimeoutMs: number | null;
 
   constructor(private readonly options: ConversationServiceOptions) {
     this.conversations = new ConversationRepository(options.db);
@@ -87,6 +89,11 @@ export class ConversationService {
     this.timeoutMs =
       options.timeoutMs ??
       Number(process.env.BUGFIX_HARNESS_CONVERSATION_TIMEOUT_MS ?? 600_000);
+    this.approvalTimeoutMs =
+      options.approvalTimeoutMs ??
+      (process.env.BUGFIX_HARNESS_APPROVAL_TTL_MS
+        ? Number(process.env.BUGFIX_HARNESS_APPROVAL_TTL_MS)
+        : null);
 
     this.runtimeManager =
       options.runtimeManager ??
@@ -105,7 +112,7 @@ export class ConversationService {
       throw new Error("Project not found");
     }
 
-    const title = parsed.title || "未命名对话";
+    const title = parsed.title.trim() || "";
     const conversation = this.conversations.create({
       projectId: parsed.projectId,
       title,
@@ -137,6 +144,35 @@ export class ConversationService {
       throw new Error("Conversation not found");
     }
     this.publishEvent(id, "raw", "conversation.updated", { conversation: updated });
+    return updated;
+  }
+
+  async renameConversation(id: string, title: string): Promise<Conversation> {
+    const normalized = title.trim();
+    if (!normalized) {
+      throw new Error("title is required");
+    }
+    const existing = this.conversations.get(id);
+    if (!existing) {
+      throw new Error("Conversation not found");
+    }
+
+    const updated = this.conversations.update(id, {
+      title: normalized.slice(0, 120),
+    });
+    if (!updated) {
+      throw new Error("Conversation not found");
+    }
+
+    const runtime = this.runtimeManager.get(id);
+    const threadId = existing.codexThreadId ?? runtime?.currentThreadId;
+    if (runtime && threadId) {
+      this.syncThreadNameBestEffort(runtime, threadId, updated.title);
+    }
+
+    this.publishEvent(id, "raw", "conversation.updated", {
+      conversation: updated,
+    });
     return updated;
   }
 
@@ -215,7 +251,9 @@ export class ConversationService {
         startedAtMs: Date.now(),
       });
 
-      const completion = await runtime.waitForTurnCompletion(this.timeoutMs);
+      const completion = await runtime.waitForTurnCompletion({
+        idleTimeoutMs: this.timeoutMs,
+      });
       const turn = this.turns.getByCodexTurnId(conversationId, codexTurnId);
       if (turn) {
         this.turns.update(turn.id, {
@@ -230,6 +268,19 @@ export class ConversationService {
 
       this.conversations.updateStatus(conversationId, "IDLE");
       this.activeTurnIds.delete(conversationId);
+      const threadId =
+        conversation.codexThreadId ?? runtime.currentThreadId;
+      if (threadId) {
+        void this.generateConversationTitleIfNeeded(
+          conversationId,
+          threadId,
+          runtime,
+          input.text || input.mentions[0]?.name || "",
+        ).catch(() => {
+          // Title generation is best-effort and must not affect the message
+          // response once the turn has completed.
+        });
+      }
       return { turnId: codexTurnId };
     } catch (error) {
       const turn = runtime.currentTurnId
@@ -501,6 +552,7 @@ export class ConversationService {
       this.eventsBus,
       conversation.policy,
       new DynamicToolRegistry(projectRoot),
+      this.approvalTimeoutMs,
     );
     this.activeCoordinators.set(conversationId, coordinator);
     runtime.onServerRequest = (message) =>
@@ -552,6 +604,69 @@ export class ConversationService {
       },
     });
     this.publishEvent(conversationId, "user.message", "user.message", input);
+  }
+
+  private async generateConversationTitleIfNeeded(
+    conversationId: string,
+    threadId: string,
+    runtime: AppServerRuntime,
+    fallbackText: string,
+  ): Promise<void> {
+    const conversation = this.conversations.get(conversationId);
+    if (
+      !conversation ||
+      (conversation.title && conversation.title !== "未命名对话")
+    ) {
+      return;
+    }
+
+    let generatedTitle = "";
+    try {
+      if (typeof runtime.getConversationSummary === "function") {
+        const result = (await runtime.getConversationSummary(threadId)) as {
+          summary?: { preview?: string; title?: string };
+        };
+        const preview =
+          result?.summary?.title ??
+          result?.summary?.preview ??
+          "";
+        generatedTitle = this.normalizeConversationTitle(preview);
+      }
+    } catch {
+      // Fall back to a deterministic title below.
+    }
+
+    if (!generatedTitle) {
+      generatedTitle = fallbackConversationTitle(fallbackText);
+    }
+
+    if (generatedTitle && generatedTitle !== "未命名对话") {
+      this.conversations.update(conversationId, { title: generatedTitle });
+      this.syncThreadNameBestEffort(runtime, threadId, generatedTitle);
+    }
+  }
+
+  private syncThreadNameBestEffort(
+    runtime: AppServerRuntime,
+    threadId: string,
+    title: string,
+  ): void {
+    void runtime.setThreadName(threadId, title).catch(() => {
+      // The local conversation title is authoritative even if the Codex
+      // thread name cannot be updated.
+    });
+  }
+
+  private normalizeConversationTitle(value: string): string {
+    const firstLine = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    const normalized = (firstLine ?? "")
+      .replace(/\s+/g, " ")
+      .replace(/^(标题[:：\s]+|title[:：\s]+)/i, "")
+      .trim();
+    return normalized.slice(0, 120);
   }
 
   private publishEvent(

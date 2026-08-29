@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import {
   MessageTimeline,
   QuickCommandPalette,
@@ -76,6 +76,57 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("pnpm test")).toBeTruthy();
     expect(screen.getByText("文件变更")).toBeTruthy();
+  });
+
+  it("renders only one copy of a locally persisted user message", () => {
+    const { container } = render(
+      <MessageTimeline
+        items={[
+          item({
+            itemType: "userMessage",
+            role: "user",
+            payload: { text: "你好" },
+          }),
+          item({
+            itemType: "userMessage",
+            role: "user",
+            codexItemId: "codex-user-1",
+            payload: {
+              content: [{ type: "text", text: "你好", text_elements: [] }],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(within(container).getAllByText("你好")).toHaveLength(1);
+  });
+
+  it("renders token usage without leaking raw JSON", () => {
+    render(
+      <MessageTimeline
+        items={[
+          item({
+            itemType: "tokenUsage",
+            payload: {
+              tokenUsage: {
+                last: { inputTokens: 12, outputTokens: 34 },
+                total: {
+                  inputTokens: 100,
+                  outputTokens: 200,
+                  totalTokens: 300,
+                },
+                modelContextWindow: 200000,
+              },
+            },
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Token 用量")).toBeTruthy();
+    expect(screen.getByText(/累计 输入 100/)).toBeTruthy();
+    expect(screen.queryByText(/tokenUsage/)).toBeNull();
   });
 
   it("renders and invokes quick commands", () => {

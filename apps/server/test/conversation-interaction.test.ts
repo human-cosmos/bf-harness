@@ -155,6 +155,35 @@ describe("ConversationInteractionCoordinator", () => {
     expect(stored.decision).toBe("cancel");
   });
 
+  it("does not auto-cancel an approval when no TTL is configured", async () => {
+    const db = openDatabase(":memory:");
+    const conversationId = createConversationId(db);
+    const coordinator = new ConversationInteractionCoordinator(
+      conversationId,
+      new ConversationApprovalRepository(db),
+      new ConversationClarificationRepository(db),
+      new EventBus(),
+      DEFAULT_CONVERSATION_POLICY,
+      new DynamicToolRegistry(tmpdir()),
+    );
+
+    const responsePromise = coordinator.handleServerRequest({
+      method: "item/commandExecution/requestApproval",
+      id: 21,
+      params: { command: "npm test", kind: "command" },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const stored = new ConversationApprovalRepository(db).listByConversation(
+      conversationId,
+    )[0];
+    expect(stored.decision).toBeNull();
+
+    coordinator.decideApproval(stored.id, "accept");
+    await expect(responsePromise).resolves.toEqual({ decision: "accept" });
+  });
+
   it("rejects symlink paths that escape the project root", async () => {
     const root = mkdtempSync(join(tmpdir(), "conversation-tool-root-"));
     const outside = mkdtempSync(join(tmpdir(), "conversation-tool-outside-"));

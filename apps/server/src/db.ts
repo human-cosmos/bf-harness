@@ -336,6 +336,15 @@ export function migrate(db: AppDatabase): void {
         ALTER TABLE conversation_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'raw';
       `,
     },
+    {
+      version: 7,
+      sql: `
+        ALTER TABLE agent_events ADD COLUMN level TEXT NOT NULL DEFAULT 'debug';
+        ALTER TABLE agent_events ADD COLUMN source TEXT NOT NULL DEFAULT 'runtime';
+        ALTER TABLE agent_events ADD COLUMN phase TEXT NOT NULL DEFAULT 'lifecycle';
+        ALTER TABLE agent_events ADD COLUMN message TEXT NOT NULL DEFAULT '';
+      `,
+    },
   ];
 
   for (const migration of migrations) {

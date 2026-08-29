@@ -6,6 +6,7 @@ import {
 import type { AppDatabase } from "../db.js";
 import { PlanApprovalRepository } from "../repositories/plan-approval-repository.js";
 import { TaskRepository } from "../repositories/task-repository.js";
+import type { EventBus } from "./event-bus.js";
 
 export class WorkflowService {
   readonly plans: PlanApprovalRepository;
@@ -14,6 +15,7 @@ export class WorkflowService {
     private readonly tasks: TaskRepository,
     db: AppDatabase,
     plans?: PlanApprovalRepository,
+    private readonly events?: EventBus,
   ) {
     this.plans = plans ?? new PlanApprovalRepository(db);
   }
@@ -24,6 +26,11 @@ export class WorkflowService {
     const plan = planSchema.parse(input);
     const approval = this.plans.create(taskId, plan);
     this.tasks.updateStatus(taskId, "WAITING_FOR_PLAN_APPROVAL");
+    this.events?.publish({
+      type: "plan.approval_requested",
+      taskId,
+      payload: { approvalId: approval.id },
+    });
     return approval;
   }
 
@@ -33,6 +40,11 @@ export class WorkflowService {
     const approval = this.requirePendingApproval(taskId);
     this.plans.decide(approval.id, "APPROVED", comment);
     this.tasks.updateStatus(taskId, "IMPLEMENTING");
+    this.events?.publish({
+      type: "plan.approved",
+      taskId,
+      payload: { approvalId: approval.id },
+    });
     return { approvalId: approval.id };
   }
 
@@ -42,6 +54,11 @@ export class WorkflowService {
     const approval = this.requirePendingApproval(taskId);
     this.plans.decide(approval.id, "REJECTED", comment);
     this.tasks.updateStatus(taskId, "ANALYZING");
+    this.events?.publish({
+      type: "plan.rejected",
+      taskId,
+      payload: { approvalId: approval.id, comment },
+    });
     return { approvalId: approval.id };
   }
 
@@ -49,12 +66,22 @@ export class WorkflowService {
     const task = this.requireTask(taskId);
     this.requireTransition(task.status, "CANCELLED");
     this.tasks.updateStatus(taskId, "CANCELLED");
+    this.events?.publish({
+      type: "task.status_changed",
+      taskId,
+      payload: { status: "CANCELLED" },
+    });
   }
 
   acceptTask(taskId: string) {
     const task = this.requireTask(taskId);
     this.requireStatus(task, "WAITING_FOR_ACCEPTANCE");
     this.tasks.updateStatus(taskId, "ACCEPTED");
+    this.events?.publish({
+      type: "task.status_changed",
+      taskId,
+      payload: { status: "ACCEPTED" },
+    });
     return this.tasks.get(taskId)!;
   }
 
@@ -62,6 +89,11 @@ export class WorkflowService {
     const task = this.requireTask(taskId);
     this.requireStatus(task, "WAITING_FOR_ACCEPTANCE");
     this.tasks.updateStatus(taskId, "REJECTED");
+    this.events?.publish({
+      type: "task.status_changed",
+      taskId,
+      payload: { status: "REJECTED" },
+    });
     return { task: this.tasks.get(taskId)!, comment };
   }
 
@@ -69,6 +101,11 @@ export class WorkflowService {
     const task = this.requireTask(taskId);
     this.requireStatus(task, "WAITING_FOR_ACCEPTANCE");
     this.tasks.updateStatus(taskId, "IMPLEMENTING");
+    this.events?.publish({
+      type: "task.status_changed",
+      taskId,
+      payload: { status: "IMPLEMENTING" },
+    });
     return { task: this.tasks.get(taskId)!, comment };
   }
 
@@ -76,6 +113,11 @@ export class WorkflowService {
     const task = this.requireTask(taskId);
     this.requireTransition(task.status, next);
     this.tasks.updateStatus(taskId, next);
+    this.events?.publish({
+      type: "task.status_changed",
+      taskId,
+      payload: { status: next },
+    });
     return this.tasks.get(taskId)!;
   }
 

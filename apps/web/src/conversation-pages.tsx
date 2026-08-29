@@ -76,10 +76,126 @@ function textFromItem(item: ConversationItem): string {
   if (typeof payload.delta === "string") return payload.delta;
   if (typeof payload.content === "string") return payload.content;
   if (typeof payload.message === "string") return payload.message;
+  if (Array.isArray(payload.content)) {
+    return payload.content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (
+          part &&
+          typeof part === "object" &&
+          typeof (part as Record<string, unknown>).text === "string"
+        ) {
+          return (part as Record<string, unknown>).text as string;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
   if (item.itemType === "commandExecution" && typeof payload.command === "string") {
     return payload.command;
   }
   return "";
+}
+
+function conversationDisplayTitle(title: string): string {
+  return title.trim() || "新对话";
+}
+
+type ToolbarIconName =
+  | "stop"
+  | "fork"
+  | "compress"
+  | "shield"
+  | "list"
+  | "terminal"
+  | "edit"
+  | "paperclip"
+  | "send";
+
+const toolbarIcons: Record<ToolbarIconName, ReactNode> = {
+  stop: (
+    <>
+      <rect x="7" y="7" width="10" height="10" rx="1.5" />
+    </>
+  ),
+  fork: (
+    <>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <path d="M6 7v4c0 2 1.5 3 3.5 3H15" />
+      <path d="M15 14v4" />
+      <path d="M18 6v4c0 2-1.5 3-3.5 3" />
+    </>
+  ),
+  compress: (
+    <>
+      <path d="M8 3H3v5" />
+      <path d="M3 3l5 5" />
+      <path d="M16 21h5v-5" />
+      <path d="M21 21l-5-5" />
+      <path d="M7 21H4v-3" />
+      <path d="M17 3h3v3" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z" />
+      <path d="M9 12l2 2 4-4" />
+    </>
+  ),
+  list: (
+    <>
+      <path d="M8 6h13" />
+      <path d="M8 12h13" />
+      <path d="M8 18h13" />
+      <path d="M3 6h.01" />
+      <path d="M3 12h.01" />
+      <path d="M3 18h.01" />
+    </>
+  ),
+  terminal: (
+    <>
+      <path d="M4 5h16v14H4z" />
+      <path d="M8 9l3 3-3 3" />
+      <path d="M13 15h4" />
+    </>
+  ),
+  edit: (
+    <>
+      <path d="M4 20h4l11-11a2 2 0 0 0-3-3L5 17v3z" />
+      <path d="M13 7l3 3" />
+    </>
+  ),
+  paperclip: (
+    <>
+      <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </>
+  ),
+  send: (
+    <>
+      <path d="m22 2-7 20-4-9-9-4Z" />
+      <path d="M22 2 11 13" />
+    </>
+  ),
+};
+
+function ToolbarIcon({ name }: { name: ToolbarIconName }) {
+  return (
+    <svg
+      className="toolbar-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {toolbarIcons[name]}
+    </svg>
+  );
 }
 
 function CommandBlock({ item }: { item: ConversationItem }) {
@@ -90,7 +206,7 @@ function CommandBlock({ item }: { item: ConversationItem }) {
   const durationMs = payload.durationMs === undefined ? null : payload.durationMs;
 
   return (
-    <details className="conversation-tool-block command-block" open>
+    <details className="conversation-tool-block command-block">
       <summary>
         <span className="block-label">命令</span>
         <span className="mono muted">{command || "命令执行"}</span>
@@ -112,7 +228,7 @@ function FileChangeBlock({ item }: { item: ConversationItem }) {
     : [];
 
   return (
-    <details className="conversation-tool-block file-change-block" open>
+    <details className="conversation-tool-block file-change-block">
       <summary>
         <span className="block-label">文件变更</span>
         <span className="muted">{changes.length} 个文件</span>
@@ -136,7 +252,7 @@ function FileChangeBlock({ item }: { item: ConversationItem }) {
 function McpToolBlock({ item }: { item: ConversationItem }) {
   const payload = item.payload ?? {};
   return (
-    <details className="conversation-tool-block mcp-block" open>
+    <details className="conversation-tool-block mcp-block">
       <summary>
         <span className="block-label">MCP 工具</span>
         <span className="mono muted">
@@ -556,7 +672,7 @@ export function ConversationListPage() {
               to={`/projects/${projectId}/chat/${conversation.id}`}
               className="conversation-list-item"
             >
-              <strong>{conversation.title || "未命名对话"}</strong>
+              <strong>{conversationDisplayTitle(conversation.title)}</strong>
               <span className="muted">{conversation.status}</span>
               <span className="muted">{formatDate(conversation.updatedAt)}</span>
             </Link>
@@ -811,38 +927,83 @@ export function ConversationPage() {
           返回对话列表
         </Link>
       </div>
-      <div className="page-header">
-        <div>
+      <div className="page-header conversation-page-header">
+        <div className="conversation-heading">
           <p className="page-kicker">项目对话</p>
-          <h1>{conversation.title || "未命名对话"}</h1>
+          <h1>{conversationDisplayTitle(conversation.title)}</h1>
         </div>
-        <div className="page-actions">
-          <span className={`badge badge-${websocket.connected ? "success" : "warning"}`}>
-            {websocket.connected ? "实时连接" : "重连中..."}
-          </span>
-          <span className="badge badge-neutral">{conversation.status}</span>
+        <div className="conversation-header-tools">
+          <div className="page-actions conversation-status-badges">
+            <span className={`badge badge-${websocket.connected ? "success" : "warning"}`}>
+              {websocket.connected ? "实时连接" : "重连中..."}
+            </span>
+            <span className="badge badge-neutral">{conversation.status}</span>
+          </div>
+          <div className="conversation-toolbar">
+            <button
+              type="button"
+              aria-label="重命名"
+              data-tooltip="重命名"
+              onClick={() => {
+                setRenaming(true);
+                setRenameValue(conversation.title);
+              }}
+            >
+              <ToolbarIcon name="edit" />
+            </button>
+            <button
+              type="button"
+              aria-label="中断"
+              data-tooltip="中断"
+              disabled={busy}
+              onClick={interrupt}
+            >
+              <ToolbarIcon name="stop" />
+            </button>
+            <button
+              type="button"
+              aria-label="Fork"
+              data-tooltip="Fork"
+              disabled={busy}
+              onClick={fork}
+            >
+              <ToolbarIcon name="fork" />
+            </button>
+            <button
+              type="button"
+              aria-label="压缩"
+              data-tooltip="压缩"
+              disabled={busy}
+              onClick={compact}
+            >
+              <ToolbarIcon name="compress" />
+            </button>
+            <button
+              type="button"
+              aria-label="策略"
+              data-tooltip="策略"
+              onClick={() => setShowPolicy((current) => !current)}
+            >
+              <ToolbarIcon name="shield" />
+            </button>
+            <button
+              type="button"
+              aria-label="日志"
+              data-tooltip="日志"
+              onClick={() => setShowActivity((current) => !current)}
+            >
+              <ToolbarIcon name="list" />
+            </button>
+            <button
+              type="button"
+              aria-label="快捷指令"
+              data-tooltip="快捷指令"
+              onClick={() => setShowCommands((current) => !current)}
+            >
+              <ToolbarIcon name="terminal" />
+            </button>
+          </div>
         </div>
-      </div>
-
-      <div className="conversation-toolbar">
-        <button type="button" disabled={busy} onClick={interrupt}>
-          中断
-        </button>
-        <button type="button" disabled={busy} onClick={fork}>
-          Fork
-        </button>
-        <button type="button" disabled={busy} onClick={compact}>
-          压缩
-        </button>
-        <button type="button" onClick={() => setShowPolicy((current) => !current)}>
-          策略
-        </button>
-        <button type="button" onClick={() => setShowActivity((current) => !current)}>
-          日志
-        </button>
-        <button type="button" onClick={() => setShowCommands((current) => !current)}>
-          快捷指令
-        </button>
       </div>
 
       {showCommands ? (
@@ -854,6 +1015,9 @@ export function ConversationPage() {
 
       {renaming ? (
         <div className="conversation-rename">
+          <span className="conversation-rename-label">
+            <ToolbarIcon name="edit" />
+          </span>
           <input
             aria-label="对话标题"
             value={renameValue}
@@ -862,6 +1026,15 @@ export function ConversationPage() {
           />
           <button type="button" className="btn-primary" onClick={renameConversation}>
             保存标题
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setRenaming(false);
+              setRenameValue("");
+            }}
+          >
+            取消
           </button>
         </div>
       ) : null}
@@ -947,15 +1120,26 @@ export function ConversationPage() {
               }
             }}
           />
-          <div className="actions">
+          <div className="conversation-composer-actions">
             <button
               type="button"
+              className={`composer-action composer-action-attach${showFilePicker ? " is-active" : ""}`}
+              aria-label="引用文件"
+              title="引用文件"
+              aria-pressed={showFilePicker}
               onClick={() => setShowFilePicker((current) => !current)}
             >
-              引用文件
+              <ToolbarIcon name="paperclip" />
             </button>
-            <button className="btn-primary" type="button" disabled={busy || !text.trim()} onClick={send}>
-              {busy ? "处理中..." : "发送"}
+            <button
+              className="composer-action composer-action-send"
+              type="button"
+              aria-label="发送"
+              title="发送"
+              disabled={busy || !text.trim()}
+              onClick={send}
+            >
+              {busy ? <span className="spinner" aria-hidden="true" /> : <ToolbarIcon name="send" />}
             </button>
           </div>
         </div>
@@ -965,7 +1149,9 @@ export function ConversationPage() {
 }
 
 export function MessageTimeline({ items }: { items: ConversationItem[] }) {
-  if (items.length === 0) {
+  const visibleItems = useMemo(() => dedupeTimelineItems(items), [items]);
+
+  if (visibleItems.length === 0) {
     return (
       <div className="card empty-state">
         <h2>开始对话</h2>
@@ -976,9 +1162,139 @@ export function MessageTimeline({ items }: { items: ConversationItem[] }) {
 
   return (
     <div className="conversation-timeline">
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <ConversationItemBlock key={item.id} item={item} />
       ))}
+    </div>
+  );
+}
+
+function dedupeTimelineItems(items: ConversationItem[]): ConversationItem[] {
+  const localUserIdentities = new Set(
+    items
+      .filter(
+        (item) => item.itemType === "userMessage" && !item.codexItemId,
+      )
+      .map(userMessageIdentity)
+      .filter(Boolean),
+  );
+
+  return items.filter((item) => {
+    if (item.itemType !== "userMessage" || !item.codexItemId) {
+      return true;
+    }
+    const identity = userMessageIdentity(item);
+    return !(identity && localUserIdentities.has(identity));
+  });
+}
+
+function userMessageIdentity(item: ConversationItem): string {
+  const payload = item.payload as Record<string, unknown>;
+  const text = textFromItem(item).trim();
+  const mentions = Array.isArray(payload?.mentions)
+    ? (payload.mentions as Array<Record<string, unknown>>)
+        .flatMap((mention) => {
+          if (
+            typeof mention?.name !== "string" ||
+            typeof mention?.path !== "string"
+          ) {
+            return [];
+          }
+          return [`${mention.name}\u0000${mention.path}`];
+        })
+        .sort()
+    : Array.isArray(payload?.content)
+      ? (payload.content as Array<Record<string, unknown>>)
+          .flatMap((part) => {
+            if (
+              part?.type !== "mention" ||
+              typeof part?.name !== "string" ||
+              typeof part?.path !== "string"
+            ) {
+              return [];
+            }
+            return [`${part.name}\u0000${part.path}`];
+          })
+          .sort()
+      : [];
+  return JSON.stringify({ text, mentions });
+}
+
+type TokenBreakdown = {
+  totalTokens?: number;
+  inputTokens?: number;
+  cachedInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  outputTokens?: number;
+  reasoningOutputTokens?: number;
+};
+
+function tokenUsageFromItem(item: ConversationItem): {
+  total: TokenBreakdown | null;
+  last: TokenBreakdown | null;
+  modelContextWindow: number | null;
+} {
+  const payload = item.payload as Record<string, unknown>;
+  const nested = payload?.tokenUsage as
+    | {
+        total?: TokenBreakdown;
+        last?: TokenBreakdown;
+        modelContextWindow?: number | null;
+      }
+    | undefined;
+  const direct =
+    payload &&
+    typeof payload === "object" &&
+    ("total" in payload || "inputTokens" in payload || "last" in payload)
+      ? (payload as {
+          total?: TokenBreakdown;
+          last?: TokenBreakdown;
+          modelContextWindow?: number | null;
+        })
+      : null;
+  const usage = nested ?? direct;
+
+  return {
+    total: usage?.total ?? null,
+    last: usage?.last ?? null,
+    modelContextWindow: usage?.modelContextWindow ?? null,
+  };
+}
+
+function formatTokenCount(value: number | undefined): string {
+  if (value === undefined || Number.isNaN(value)) return "—";
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
+function TokenUsageBlock({ item }: { item: ConversationItem }) {
+  const usage = tokenUsageFromItem(item);
+  const hasData = Boolean(usage.total || usage.last);
+
+  return (
+    <div className="token-usage muted">
+      <span className="token-usage-title">Token 用量</span>
+      {hasData ? (
+        <div className="token-usage-stats">
+          {usage.last ? (
+            <span>
+              本次 输入 {formatTokenCount(usage.last.inputTokens)} · 输出{" "}
+              {formatTokenCount(usage.last.outputTokens)}
+            </span>
+          ) : null}
+          {usage.total ? (
+            <span>
+              累计 输入 {formatTokenCount(usage.total.inputTokens)} · 输出{" "}
+              {formatTokenCount(usage.total.outputTokens)} · 总计{" "}
+              {formatTokenCount(usage.total.totalTokens)}
+            </span>
+          ) : null}
+          {usage.modelContextWindow ? (
+            <span>上下文窗口 {formatTokenCount(usage.modelContextWindow)}</span>
+          ) : null}
+        </div>
+      ) : (
+        <span>暂无 token 数据</span>
+      )}
     </div>
   );
 }
@@ -1049,11 +1365,7 @@ function ConversationItemBlock({ item }: { item: ConversationItem }) {
   }
 
   if (item.itemType === "tokenUsage") {
-    return (
-      <div className="token-usage muted">
-        token 用量更新: {JSON.stringify(item.payload)}
-      </div>
-    );
+    return <TokenUsageBlock item={item} />;
   }
 
   if (item.itemType === "warning" || item.itemType === "error") {

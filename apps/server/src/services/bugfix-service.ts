@@ -35,6 +35,7 @@ import {
   nextValidationAction,
   validationFailureSignature,
 } from "./retry-policy.js";
+import { classifyHarnessEvent } from "./task-log-classifier.js";
 
 const localCodexBin = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -81,6 +82,9 @@ export interface BugfixServiceOptions {
   eventBus?: EventBus;
   codexBin?: string;
   analysisTimeoutMs?: number;
+  implementationTimeoutMs?: number;
+  analysisMaxTimeoutMs?: number | null;
+  implementationMaxTimeoutMs?: number | null;
 }
 
 export class BugfixService {
@@ -100,6 +104,9 @@ export class BugfixService {
   private readonly worktreeRoot: string;
   private readonly codexBin: string;
   private readonly analysisTimeoutMs: number;
+  private readonly implementationTimeoutMs: number;
+  private readonly analysisMaxTimeoutMs: number | null;
+  private readonly implementationMaxTimeoutMs: number | null;
   private readonly analysisRuns = new Map<string, AnalysisRun>();
   private readonly backgroundJobs = new Map<string, BackgroundJob>();
   private readonly activeJobs = new Set<string>();
@@ -118,7 +125,25 @@ export class BugfixService {
     this.analysisTimeoutMs =
       options.analysisTimeoutMs ??
       Number(process.env.BUGFIX_HARNESS_ANALYSIS_TIMEOUT_MS ?? 600_000);
-    this.workflow = new WorkflowService(this.tasks, options.db);
+    this.implementationTimeoutMs =
+      options.implementationTimeoutMs ??
+      Number(process.env.BUGFIX_HARNESS_IMPLEMENTATION_TIMEOUT_MS ?? 600_000);
+    this.analysisMaxTimeoutMs =
+      options.analysisMaxTimeoutMs ??
+      this.readOptionalPositiveNumber(
+        process.env.BUGFIX_HARNESS_ANALYSIS_MAX_DURATION_MS,
+      );
+    this.implementationMaxTimeoutMs =
+      options.implementationMaxTimeoutMs ??
+      this.readOptionalPositiveNumber(
+        process.env.BUGFIX_HARNESS_IMPLEMENTATION_MAX_DURATION_MS,
+      );
+    this.workflow = new WorkflowService(
+      this.tasks,
+      options.db,
+      undefined,
+      this.events,
+    );
     this.promptTemplates = new PromptTemplateRepository(options.db);
     this.execution = new ExecutionService(
       options.db,
@@ -137,6 +162,29 @@ export class BugfixService {
     });
     this.sessions = new AgentSessionRepository(options.db);
     this.agentEvents = new AgentEventRepository(options.db);
+    this.events.subscribe((event) => {
+      if (!event.taskId || !this.tasks.get(event.taskId)) {
+        return;
+      }
+      try {
+        const classification = classifyHarnessEvent(event.type, event.payload);
+        this.agentEvents.append({
+          taskId: event.taskId,
+          method: event.type,
+          payload: event.payload,
+          emittedAtMs: Date.now(),
+          level: classification.level,
+          source: classification.source,
+          phase: classification.phase,
+          message: classification.message,
+        });
+      } catch (error) {
+        console.warn(
+          `Failed to persist task log for ${event.taskId}:`,
+          (error as Error).message,
+        );
+      }
+    });
     this.agent = new AgentOrchestrator(
       this.tasks,
       this.projects,
@@ -151,7 +199,18 @@ export class BugfixService {
       (taskId) => this.prepareWorktree(taskId),
       this.clarifications,
       this.analysisTimeoutMs,
+      this.implementationTimeoutMs,
+      this.analysisMaxTimeoutMs,
+      this.implementationMaxTimeoutMs,
     );
+  }
+
+  private readOptionalPositiveNumber(value: string | undefined): number | null {
+    if (!value) {
+      return null;
+    }
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }
 
   async createProject(input: unknown) {

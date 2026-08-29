@@ -1,11 +1,16 @@
 import { AgentEventRepository } from "../repositories/agent-event-repository.js";
 import type { AppServerRuntime } from "./app-server-runtime.js";
+import {
+  classifyRuntimeNotification,
+  type TaskLogPhase,
+} from "./task-log-classifier.js";
 
 export class RuntimeEventRecorder {
   constructor(
     private readonly events: AgentEventRepository,
     private readonly taskId: string,
     private readonly workflowRunId?: string,
+    private readonly phaseHint?: TaskLogPhase,
   ) {}
 
   attach(runtime: AppServerRuntime): () => void {
@@ -17,6 +22,11 @@ export class RuntimeEventRecorder {
       params: unknown;
     }) => {
       const data = params as Record<string, unknown>;
+      const classification = classifyRuntimeNotification(
+        method,
+        data,
+        this.phaseHint,
+      );
       this.events.append({
         taskId: this.taskId,
         workflowRunId: this.workflowRunId,
@@ -26,6 +36,10 @@ export class RuntimeEventRecorder {
         method,
         payload: data,
         emittedAtMs: Date.now(),
+        level: classification.level,
+        source: classification.source,
+        phase: classification.phase,
+        message: classification.message,
       });
     };
 

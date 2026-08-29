@@ -12,6 +12,9 @@ const service = new BugfixService({
   eventBus: new EventBus(),
   codexBin: config.codexBin,
   analysisTimeoutMs: config.analysisTimeoutMs,
+  implementationTimeoutMs: config.implementationTimeoutMs,
+  analysisMaxTimeoutMs: config.analysisMaxTimeoutMs,
+  implementationMaxTimeoutMs: config.implementationMaxTimeoutMs,
 });
 
 const app = await buildApp(service);

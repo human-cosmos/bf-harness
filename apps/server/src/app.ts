@@ -417,11 +417,16 @@ export async function buildApp(service: BugfixService) {
       return reply.code(400).send({ error: "title is required" });
     }
     try {
-      return service.conversationService.updateConversation(id, {
-        title: body.title,
-      });
+      return await service.conversationService.renameConversation(
+        id,
+        body.title,
+      );
     } catch (error) {
-      return reply.code(400).send({ error: (error as Error).message });
+      const message = (error as Error).message;
+      if (message === "Conversation not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
     }
   });
 
@@ -814,6 +819,96 @@ export async function buildApp(service: BugfixService) {
       limit: parsedLimit,
       afterSeq: parsedAfterSeq,
     });
+  });
+
+  app.get("/api/tasks/:id/logs", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!service.tasks.get(id)) {
+      return reply.code(404).send({ error: "Task not found" });
+    }
+    const query = request.query as {
+      afterSeq?: string;
+      limit?: string;
+      level?: string;
+      source?: string;
+      phase?: string;
+    };
+    const parsedLimit = query.limit ? Number(query.limit) : 100;
+    const parsedAfterSeq = query.afterSeq ? Number(query.afterSeq) : 0;
+    if (
+      !Number.isInteger(parsedLimit) ||
+      parsedLimit <= 0 ||
+      parsedLimit > 1000 ||
+      !Number.isInteger(parsedAfterSeq) ||
+      parsedAfterSeq < 0
+    ) {
+      return reply.code(400).send({
+        error:
+          "limit must be a positive integer <= 1000 and afterSeq must be a non-negative integer",
+      });
+    }
+
+    const allowedLevels = new Set(["debug", "info", "warn", "error"]);
+    const allowedSources = new Set([
+      "runtime",
+      "workflow",
+      "validation",
+      "approval",
+      "server",
+    ]);
+    const allowedPhases = new Set([
+      "prepare",
+      "analyze",
+      "plan",
+      "implement",
+      "validate",
+      "report",
+      "lifecycle",
+    ]);
+    if (query.level && !allowedLevels.has(query.level)) {
+      return reply.code(400).send({ error: "level is invalid" });
+    }
+    if (query.source && !allowedSources.has(query.source)) {
+      return reply.code(400).send({ error: "source is invalid" });
+    }
+    if (query.phase && !allowedPhases.has(query.phase)) {
+      return reply.code(400).send({ error: "phase is invalid" });
+    }
+
+    const rows = service.agentEvents.listLogsByTask(id, {
+      afterSeq: parsedAfterSeq,
+      limit: parsedLimit + 1,
+      level: query.level as
+        | "debug"
+        | "info"
+        | "warn"
+        | "error"
+        | undefined,
+      source: query.source as
+        | "runtime"
+        | "workflow"
+        | "validation"
+        | "approval"
+        | "server"
+        | undefined,
+      phase: query.phase as
+        | "prepare"
+        | "analyze"
+        | "plan"
+        | "implement"
+        | "validate"
+        | "report"
+        | "lifecycle"
+        | undefined,
+    });
+
+    const hasMore = rows.length > parsedLimit;
+    const items = hasMore ? rows.slice(0, parsedLimit) : rows;
+    const last = items.at(-1) as { seq?: number } | undefined;
+    return {
+      items,
+      nextAfterSeq: hasMore && last ? last.seq ?? null : null,
+    };
   });
 
   app.post("/api/tasks/:id/approvals", async (request, reply) => {
