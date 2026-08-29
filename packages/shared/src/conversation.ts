@@ -236,8 +236,12 @@ export const conversationSettingsSchema = z.object({
 export const createConversationInputSchema = z.object({
   projectId: z.string().uuid(),
   title: z.string().trim().max(120).default(""),
-  policy: conversationPolicySchema.default(DEFAULT_CONVERSATION_POLICY),
-  settings: conversationSettingsSchema.default(DEFAULT_CONVERSATION_SETTINGS),
+  policy: conversationPolicySchema.default(() => ({
+    ...DEFAULT_CONVERSATION_POLICY,
+  })),
+  settings: conversationSettingsSchema.default(() => ({
+    ...DEFAULT_CONVERSATION_SETTINGS,
+  })),
 });
 
 export const updateConversationInputSchema = z.object({
@@ -251,11 +255,16 @@ export const conversationMentionSchema = z.object({
   path: z.string().min(1).max(4096),
 });
 
-export const sendConversationMessageSchema = z.object({
-  text: z.string().max(200_000).default(""),
-  mentions: z.array(conversationMentionSchema).max(200).default([]),
-  quickCommand: z.string().trim().max(100).optional(),
-});
+export const sendConversationMessageSchema = z
+  .object({
+    text: z.string().max(200_000).default(""),
+    mentions: z.array(conversationMentionSchema).max(200).default([]),
+    quickCommand: z.string().trim().max(100).optional(),
+  })
+  .refine(
+    (input) => input.text.trim().length > 0 || input.mentions.length > 0,
+    { message: "text or at least one mention is required" },
+  );
 
 export type CreateConversationInput = z.infer<
   typeof createConversationInputSchema

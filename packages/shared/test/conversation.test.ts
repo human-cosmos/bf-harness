@@ -41,6 +41,10 @@ describe("conversation shared model", () => {
     expect(parsed.mentions).toHaveLength(1);
   });
 
+  it("rejects an empty message without mentions", () => {
+    expect(() => sendConversationMessageSchema.parse({ text: "   " })).toThrow();
+  });
+
   it("creates a fallback title from the first non-empty line", () => {
     expect(fallbackConversationTitle("\n  请修复登录问题\n更多内容")).toBe(
       "请修复登录问题",

@@ -147,6 +147,7 @@ export class ConversationService {
     await this.runtimeManager.interrupt(id);
     this.activeCoordinators.get(id)?.cancelPending();
     this.activeCoordinators.delete(id);
+    this.activeTurnIds.delete(id);
     const deleted = this.conversations.delete(id);
     this.eventsBus.publish({
       type: "conversation.deleted",
@@ -377,12 +378,7 @@ export class ConversationService {
       return { turns: 0, items: 0 };
     }
 
-    const turnsResult = (await runtime.listTurns(threadId, { limit: 200 })) as {
-      turns?: Array<Record<string, unknown>>;
-    };
-    const turns = Array.isArray(turnsResult?.turns)
-      ? turnsResult.turns
-      : [];
+    const turns = await this.listAllTurns(runtime, threadId);
     let turnCount = 0;
     let itemCount = 0;
 
@@ -418,11 +414,7 @@ export class ConversationService {
         });
       }
 
-      const itemsResult = (await runtime.listItems(threadId, {
-        turnId: codexTurnId,
-        limit: 1000,
-      })) as { items?: Array<Record<string, unknown>> };
-      const items = Array.isArray(itemsResult?.items) ? itemsResult.items : [];
+      const items = await this.listAllItems(runtime, threadId, codexTurnId);
 
       for (const rawItem of items) {
         const codexItemId = String(rawItem.id ?? "");
@@ -587,6 +579,69 @@ export class ConversationService {
       throw new Error("Conversation not found");
     }
     return conversation;
+  }
+
+  private async listAllTurns(
+    runtime: AppServerRuntime,
+    threadId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const turns: Array<Record<string, unknown>> = [];
+    let cursor: string | null = null;
+
+    for (let page = 0; page < 100; page += 1) {
+      const result = (await runtime.listTurns(threadId, {
+        cursor,
+        limit: 200,
+      })) as {
+        data?: Array<Record<string, unknown>>;
+        nextCursor?: string | null;
+      };
+      if (Array.isArray(result?.data)) {
+        turns.push(...result.data);
+      }
+      if (!result?.nextCursor) {
+        break;
+      }
+      cursor = result.nextCursor;
+    }
+
+    return turns;
+  }
+
+  private async listAllItems(
+    runtime: AppServerRuntime,
+    threadId: string,
+    turnId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const items: Array<Record<string, unknown>> = [];
+    let cursor: string | null = null;
+
+    for (let page = 0; page < 100; page += 1) {
+      const result = (await runtime.listItems(threadId, {
+        turnId,
+        cursor,
+        limit: 1000,
+      })) as {
+        data?: Array<{
+          turnId?: string;
+          item?: Record<string, unknown>;
+        }>;
+        nextCursor?: string | null;
+      };
+      if (Array.isArray(result?.data)) {
+        for (const entry of result.data) {
+          if (entry?.item && typeof entry.item === "object") {
+            items.push(entry.item);
+          }
+        }
+      }
+      if (!result?.nextCursor) {
+        break;
+      }
+      cursor = result.nextCursor;
+    }
+
+    return items;
   }
 
   private normalizeTurnStatus(

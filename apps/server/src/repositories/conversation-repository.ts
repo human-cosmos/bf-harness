@@ -90,8 +90,12 @@ export class ConversationRepository {
       title: input.title,
       codexThreadId: null,
       status: "IDLE",
-      policy: input.policy ?? DEFAULT_CONVERSATION_POLICY,
-      settings: input.settings ?? DEFAULT_CONVERSATION_SETTINGS,
+      policy: input.policy
+        ? { ...input.policy }
+        : { ...DEFAULT_CONVERSATION_POLICY },
+      settings: input.settings
+        ? { ...input.settings }
+        : { ...DEFAULT_CONVERSATION_SETTINGS },
       createdAt: now,
       updatedAt: now,
     };

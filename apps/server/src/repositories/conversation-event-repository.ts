@@ -12,7 +12,7 @@ function rowToEvent(row: Record<string, unknown>): ConversationEvent {
     codexThreadId: row.codex_thread_id ? String(row.codex_thread_id) : null,
     codexTurnId: row.codex_turn_id ? String(row.codex_turn_id) : null,
     codexItemId: row.codex_item_id ? String(row.codex_item_id) : null,
-    kind: String(row.method) as ConversationEventKind,
+    kind: String(row.kind) as ConversationEventKind,
     method: String(row.method),
     payload: JSON.parse(String(row.payload_json)),
     dedupeKey: row.dedupe_key ? String(row.dedupe_key) : null,
@@ -64,8 +64,8 @@ export class ConversationEventRepository {
       .prepare(
         `INSERT INTO conversation_events(
           conversation_id, codex_thread_id, codex_turn_id, codex_item_id,
-          method, payload_json, dedupe_key, seq, emitted_at_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          method, payload_json, dedupe_key, seq, emitted_at_ms, kind, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         event.conversationId,
@@ -77,6 +77,7 @@ export class ConversationEventRepository {
         event.dedupeKey,
         event.seq,
         event.emittedAtMs,
+        event.kind,
         event.createdAt,
       );
 

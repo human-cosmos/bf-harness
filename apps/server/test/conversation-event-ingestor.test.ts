@@ -68,4 +68,59 @@ describe("ConversationEventIngestor", () => {
     ]);
     detach();
   });
+
+  it("tracks item lifecycle using item.id from lifecycle notifications", () => {
+    const db = openDatabase(":memory:");
+    const project = new ProjectRepository(db).create({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: [],
+      validationCommands: [],
+      allowedPaths: [],
+      forbiddenPaths: [],
+    });
+    const conversation = new ConversationRepository(db).create({
+      projectId: project.id,
+      title: "测试对话",
+    });
+    const events = new ConversationEventRepository(db);
+    const items = new ConversationItemRepository(db);
+    const runtime = makeRuntime();
+    (runtime as AppServerRuntime).currentThreadId = "thread-1";
+    (runtime as AppServerRuntime).currentTurnId = "turn-1";
+
+    const ingestor = new ConversationEventIngestor(
+      events,
+      items,
+      conversation.id,
+    );
+    const detach = ingestor.attach(runtime);
+
+    runtime.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: { id: "item-lifecycle", type: "commandExecution" },
+      },
+    });
+    runtime.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        item: {
+          id: "item-lifecycle",
+          type: "commandExecution",
+          status: "completed",
+        },
+      },
+    });
+
+    const stored = items.listByConversation(conversation.id);
+    expect(stored).toHaveLength(1);
+    expect(stored[0].codexItemId).toBe("item-lifecycle");
+    expect(stored[0].status).toBe("completed");
+    detach();
+  });
 });

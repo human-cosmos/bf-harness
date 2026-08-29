@@ -20,7 +20,7 @@ describe("conversation recovery", () => {
     const fakeRuntime = {
       currentThreadId: "thread-1",
       listTurns: async () => ({
-        turns: [
+        data: [
           {
             id: "turn-1",
             status: "completed",
@@ -29,16 +29,21 @@ describe("conversation recovery", () => {
             durationMs: 10000,
           },
         ],
+        nextCursor: null,
       }),
       listItems: async () => ({
-        items: [
+        data: [
           {
-            id: "item-1",
-            type: "agentMessage",
-            role: "assistant",
-            text: "恢复成功",
+            turnId: "turn-1",
+            item: {
+              id: "item-1",
+              type: "agentMessage",
+              role: "assistant",
+              text: "恢复成功",
+            },
           },
         ],
+        nextCursor: null,
       }),
     };
 

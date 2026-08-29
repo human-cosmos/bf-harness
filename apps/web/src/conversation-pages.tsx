@@ -592,11 +592,11 @@ export function ConversationPage() {
 
   const websocket = useConversationEvents(conversationId);
 
-  async function load() {
+  async function load(shouldSync = false) {
     if (!conversationId) return;
     try {
       const nextConversation = await api.getConversation(conversationId);
-      if (nextConversation.codexThreadId) {
+      if (shouldSync && nextConversation.codexThreadId) {
         try {
           await api.syncConversation(conversationId);
         } catch {
@@ -622,18 +622,18 @@ export function ConversationPage() {
   }
 
   useEffect(() => {
-    void load();
+    void load(true);
   }, [conversationId]);
 
   useEffect(() => {
     if (!conversationId) return;
-    const timer = setInterval(() => void load(), 2500);
+    const timer = setInterval(() => void load(false), 2500);
     return () => clearInterval(timer);
   }, [conversationId]);
 
   useEffect(() => {
     if (websocket.events.length > 0) {
-      void load();
+      void load(false);
     }
   }, [websocket.events.length]);
 

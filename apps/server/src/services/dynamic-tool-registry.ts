@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -43,6 +44,20 @@ function resolveWithinRoot(root: string, value: unknown): string {
     throw new Error("path is outside the conversation project root");
   }
   return resolved;
+}
+
+function assertRealPathWithinRoot(root: string, resolved: string): void {
+  const realRoot = realpathSync(root);
+  let probe = resolved;
+  while (!existsSync(probe)) {
+    const parent = dirname(probe);
+    if (parent === probe) break;
+    probe = parent;
+  }
+  const realProbe = realpathSync(probe);
+  if (!isInside(realRoot, realProbe)) {
+    throw new Error("resolved path escapes the conversation project root");
+  }
 }
 
 function textResult(text: string, success: boolean): DynamicToolCallResult {
@@ -94,11 +109,13 @@ export class DynamicToolRegistry {
     try {
       if (input.namespace === "fs" || input.tool === "fs/readFile") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
+        assertRealPathWithinRoot(this.projectRoot, path);
         return textResult(readFileSync(path, "utf8"), true);
       }
 
       if (input.tool === "fs/writeFile") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
+        assertRealPathWithinRoot(this.projectRoot, path);
         const content =
           typeof args.content === "string"
             ? args.content
@@ -112,12 +129,14 @@ export class DynamicToolRegistry {
 
       if (input.tool === "fs/createDirectory") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
+        assertRealPathWithinRoot(this.projectRoot, path);
         mkdirSync(path, { recursive: true });
         return textResult(`created ${relative(this.projectRoot, path)}`, true);
       }
 
       if (input.tool === "fs/readDirectory") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
+        assertRealPathWithinRoot(this.projectRoot, path);
         const entries = readdirSync(path, { withFileTypes: true }).map(
           (entry) => ({
             name: entry.name,
@@ -134,6 +153,7 @@ export class DynamicToolRegistry {
 
       if (input.tool === "fs/getMetadata") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
+        assertRealPathWithinRoot(this.projectRoot, path);
         const stat = statSync(path);
         return textResult(
           JSON.stringify(

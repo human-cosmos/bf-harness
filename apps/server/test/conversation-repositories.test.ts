@@ -107,7 +107,9 @@ describe("conversation repositories", () => {
       dedupeKey: "turn-1:item-1:0",
     });
     expect(event.seq).toBe(1);
-    expect(events.listByConversation(conversation.id)).toHaveLength(1);
+    const storedEvents = events.listByConversation(conversation.id);
+    expect(storedEvents).toHaveLength(1);
+    expect(storedEvents[0].kind).toBe("agent.message.delta");
 
     const approval = approvals.create({
       conversationId: conversation.id,

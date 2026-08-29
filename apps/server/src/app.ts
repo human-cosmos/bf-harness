@@ -82,6 +82,71 @@ function inspectGitRepo(repoPath: string): Promise<{
   });
 }
 
+function parseConversationPagination(
+  query: {
+    limit?: string;
+    afterSeq?: string;
+    offset?: string;
+  },
+  options: { defaultLimit: number; maxLimit: number },
+):
+  | {
+      limit: number;
+      afterSeq?: number;
+      offset?: number;
+    }
+  | { error: string } {
+  const limitRaw = query.limit;
+  const afterSeqRaw = query.afterSeq;
+  const offsetRaw = query.offset;
+
+  const parseInteger = (
+    value: string | undefined,
+    fallback: number,
+    name: string,
+    max: number,
+  ): { value?: number; error?: string } => {
+    if (value === undefined) return { value: fallback };
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      return { error: `${name} must be a non-negative integer` };
+    }
+    if (parsed > max) {
+      return { error: `${name} must be <= ${max}` };
+    }
+    return { value: parsed };
+  };
+
+  const limit = parseInteger(
+    limitRaw,
+    options.defaultLimit,
+    "limit",
+    options.maxLimit,
+  );
+  if (limit.error) return { error: limit.error };
+  if (!limit.value || limit.value === 0) {
+    return { error: "limit must be a positive integer" };
+  }
+
+  if (afterSeqRaw !== undefined) {
+    const afterSeq = parseInteger(afterSeqRaw, 0, "afterSeq", Number.MAX_SAFE_INTEGER);
+    if (afterSeq.error) return { error: afterSeq.error };
+    if (afterSeq.value !== undefined) {
+      return { limit: limit.value, afterSeq: afterSeq.value };
+    }
+  }
+
+  if (offsetRaw !== undefined) {
+    const offset = parseInteger(offsetRaw, 0, "offset", Number.MAX_SAFE_INTEGER);
+    if (offset.error) return { error: offset.error };
+    if (offset.value !== undefined) {
+      return { limit: limit.value, offset: offset.value };
+    }
+  }
+
+  return { limit: limit.value };
+}
+
 export async function buildApp(service: BugfixService) {
   const app = Fastify({ logger: false });
   await app.register(websocket);
@@ -360,52 +425,80 @@ export async function buildApp(service: BugfixService) {
     }
   });
 
-  app.get("/api/conversations/:id/turns", async (request) => {
+  app.get("/api/conversations/:id/turns", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { limit, offset } = request.query as {
       limit?: string;
       offset?: string;
     };
+    const page = parseConversationPagination(
+      { limit, offset },
+      { defaultLimit: 200, maxLimit: 1000 },
+    );
+    if ("error" in page) {
+      return reply.code(400).send({ error: page.error });
+    }
     return service.conversationService.listTurns(id, {
-      limit: limit ? Number(limit) : 200,
-      offset: offset ? Number(offset) : 0,
+      limit: page.limit,
+      offset: page.offset ?? 0,
     });
   });
 
-  app.get("/api/conversations/:id/turns/:turnId/items", async (request) => {
+  app.get("/api/conversations/:id/turns/:turnId/items", async (request, reply) => {
     const { id, turnId } = request.params as { id: string; turnId: string };
     const { afterSeq, limit } = request.query as {
       afterSeq?: string;
       limit?: string;
     };
+    const page = parseConversationPagination(
+      { afterSeq, limit },
+      { defaultLimit: 500, maxLimit: 1000 },
+    );
+    if ("error" in page) {
+      return reply.code(400).send({ error: page.error });
+    }
     return service.conversationService.listItems(id, {
       turnId,
-      afterSeq: afterSeq ? Number(afterSeq) : 0,
-      limit: limit ? Number(limit) : 500,
+      afterSeq: page.afterSeq ?? 0,
+      limit: page.limit,
     });
   });
 
-  app.get("/api/conversations/:id/events", async (request) => {
+  app.get("/api/conversations/:id/events", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { afterSeq, limit } = request.query as {
       afterSeq?: string;
       limit?: string;
     };
+    const page = parseConversationPagination(
+      { afterSeq, limit },
+      { defaultLimit: 1000, maxLimit: 1000 },
+    );
+    if ("error" in page) {
+      return reply.code(400).send({ error: page.error });
+    }
     return service.conversationService.listEvents(id, {
-      afterSeq: afterSeq ? Number(afterSeq) : 0,
-      limit: limit ? Number(limit) : 1000,
+      afterSeq: page.afterSeq ?? 0,
+      limit: page.limit,
     });
   });
 
-  app.get("/api/conversations/:id/items", async (request) => {
+  app.get("/api/conversations/:id/items", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { afterSeq, limit } = request.query as {
       afterSeq?: string;
       limit?: string;
     };
+    const page = parseConversationPagination(
+      { afterSeq, limit },
+      { defaultLimit: 1000, maxLimit: 1000 },
+    );
+    if ("error" in page) {
+      return reply.code(400).send({ error: page.error });
+    }
     return service.conversationService.listItems(id, {
-      afterSeq: afterSeq ? Number(afterSeq) : 0,
-      limit: limit ? Number(limit) : 1000,
+      afterSeq: page.afterSeq ?? 0,
+      limit: page.limit,
     });
   });
 

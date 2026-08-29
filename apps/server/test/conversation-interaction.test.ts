@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -126,5 +126,47 @@ describe("ConversationInteractionCoordinator", () => {
     });
     expect(result.success).toBe(true);
     expect(result.contentItems[0].text).toBe("hello");
+  });
+
+  it("times out an unanswered approval request and marks it cancelled", async () => {
+    const db = openDatabase(":memory:");
+    const conversationId = createConversationId(db);
+    const coordinator = new ConversationInteractionCoordinator(
+      conversationId,
+      new ConversationApprovalRepository(db),
+      new ConversationClarificationRepository(db),
+      new EventBus(),
+      DEFAULT_CONVERSATION_POLICY,
+      new DynamicToolRegistry(tmpdir()),
+      20,
+    );
+
+    await expect(
+      coordinator.handleServerRequest({
+        method: "item/commandExecution/requestApproval",
+        id: 20,
+        params: { command: "npm test", kind: "command" },
+      }),
+    ).resolves.toEqual({ decision: "cancel" });
+
+    const stored = new ConversationApprovalRepository(db).listByConversation(
+      conversationId,
+    )[0];
+    expect(stored.decision).toBe("cancel");
+  });
+
+  it("rejects symlink paths that escape the project root", async () => {
+    const root = mkdtempSync(join(tmpdir(), "conversation-tool-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "conversation-tool-outside-"));
+    writeFileSync(join(outside, "secret.txt"), "secret");
+    symlinkSync(join(outside, "secret.txt"), join(root, "link.txt"));
+
+    const registry = new DynamicToolRegistry(root);
+    const result = await registry.call({
+      tool: "fs/readFile",
+      arguments: { path: "link.txt" },
+    });
+    expect(result.success).toBe(false);
+    expect(result.contentItems[0].text).toContain("escapes");
   });
 });

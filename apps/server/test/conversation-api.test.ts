@@ -93,4 +93,39 @@ describe("conversation API", () => {
       db.close();
     }
   });
+
+  it("rejects invalid conversation pagination parameters", async () => {
+    const db = openDatabase(":memory:");
+    const worktreeRoot = mkdtempSync(join(tmpdir(), "conversation-api-"));
+    const service = new BugfixService({
+      db,
+      worktreeRoot,
+      eventBus: new EventBus(),
+    });
+    const project = new ProjectRepository(db).create({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: [],
+      validationCommands: [],
+      allowedPaths: [],
+      forbiddenPaths: [],
+    });
+    const conversation = await service.conversationService.createConversation({
+      projectId: project.id,
+      title: "分页测试",
+    });
+    const app = await buildApp(service);
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: `/api/conversations/${conversation.id}/events?limit=abc`,
+      });
+      expect(response.statusCode).toBe(400);
+    } finally {
+      await app.close();
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
 });

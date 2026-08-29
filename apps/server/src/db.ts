@@ -330,6 +330,12 @@ export function migrate(db: AppDatabase): void {
         CREATE INDEX idx_conversation_clarifications_conversation ON conversation_clarifications(conversation_id);
       `,
     },
+    {
+      version: 6,
+      sql: `
+        ALTER TABLE conversation_events ADD COLUMN kind TEXT NOT NULL DEFAULT 'raw';
+      `,
+    },
   ];
 
   for (const migration of migrations) {

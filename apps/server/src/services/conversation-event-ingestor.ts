@@ -72,7 +72,11 @@ export class ConversationEventIngestor {
       ? String(data.threadId)
       : runtime.currentThreadId;
     const turnId = data.turnId ? String(data.turnId) : runtime.currentTurnId;
-    const itemId = data.itemId ? String(data.itemId) : null;
+    const itemId = data.itemId
+      ? String(data.itemId)
+      : data.item && typeof data.item === "object"
+        ? String((data.item as Record<string, unknown>).id ?? "") || null
+        : null;
     const method = notification.method;
 
     this.events.append({
