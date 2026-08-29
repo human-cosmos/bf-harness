@@ -397,6 +397,18 @@ export async function buildApp(service: BugfixService) {
     });
   });
 
+  app.get("/api/conversations/:id/items", async (request) => {
+    const { id } = request.params as { id: string };
+    const { afterSeq, limit } = request.query as {
+      afterSeq?: string;
+      limit?: string;
+    };
+    return service.conversationService.listItems(id, {
+      afterSeq: afterSeq ? Number(afterSeq) : 0,
+      limit: limit ? Number(limit) : 1000,
+    });
+  });
+
   app.get("/api/conversations/:id/models", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {

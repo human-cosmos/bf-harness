@@ -15,11 +15,17 @@ import {
   SettingsPage,
   TaskDetailPage,
 } from "./pages.js";
+import {
+  ConversationListPage as ChatListPage,
+  ConversationPage as ChatPage,
+} from "./conversation-pages.js";
 
 function titleForPath(pathname: string) {
   if (pathname === "/") return "本地项目";
   if (pathname === "/projects/new") return "添加项目";
   if (pathname === "/pending") return "待办中心";
+  if (pathname.includes("/chat/")) return "项目对话";
+  if (pathname.endsWith("/chat")) return "项目对话";
   if (pathname.startsWith("/projects/")) return "项目任务";
   if (pathname === "/tasks/new") return "新建任务";
   if (pathname.includes("/plan")) return "修复计划";
@@ -66,6 +72,11 @@ export function App() {
           <Route path="/pending" element={<PendingPage />} />
           <Route path="/projects/new" element={<NewProjectPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
+          <Route path="/projects/:id/chat" element={<ChatListPage />} />
+          <Route
+            path="/projects/:id/chat/:conversationId"
+            element={<ChatPage />}
+          />
           <Route path="/tasks/new" element={<NewTaskPage />} />
           <Route path="/tasks/:id" element={<TaskDetailPage />} />
           <Route path="/tasks/:id/plan" element={<PlanPage />} />

@@ -201,6 +201,130 @@ export interface PromptTemplateSetting {
   defaultTemplate: string;
 }
 
+export type ConversationSandboxMode =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
+export type ConversationApprovalPolicy =
+  | "on-request"
+  | "never"
+  | "untrusted"
+  | "granular";
+export type ConversationApprovalsReviewer =
+  | "user"
+  | "auto_review"
+  | "guardian_subagent";
+export type ConversationStatus =
+  | "IDLE"
+  | "RUNNING"
+  | "WAITING_APPROVAL"
+  | "WAITING_CLARIFICATION"
+  | "FAILED"
+  | "ARCHIVED";
+
+export interface ConversationPolicy {
+  sandboxMode: ConversationSandboxMode;
+  networkAccess: boolean;
+  approvalPolicy: ConversationApprovalPolicy;
+  approvalsReviewer: ConversationApprovalsReviewer;
+  allowGitWrites: boolean;
+}
+
+export interface ConversationSettings {
+  model?: string;
+  reasoningEffort?: string;
+  baseInstructions?: string;
+  developerInstructions?: string;
+}
+
+export interface Conversation {
+  id: string;
+  projectId: string;
+  title: string;
+  codexThreadId: string | null;
+  status: ConversationStatus;
+  policy: ConversationPolicy;
+  settings: ConversationSettings;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationItem {
+  id: string;
+  conversationId: string;
+  codexTurnId: string | null;
+  codexItemId: string | null;
+  parentItemId: string | null;
+  itemType: string;
+  role: string | null;
+  author: string | null;
+  title: string | null;
+  status: string | null;
+  payload: Record<string, unknown>;
+  seq: number;
+  createdAtMs: number | null;
+  completedAtMs: number | null;
+  createdAt: string;
+}
+
+export interface ConversationEvent {
+  id?: number;
+  conversationId: string;
+  codexThreadId: string | null;
+  codexTurnId: string | null;
+  codexItemId: string | null;
+  kind: string;
+  method: string;
+  payload: Record<string, unknown>;
+  dedupeKey: string | null;
+  seq: number;
+  emittedAtMs: number | null;
+  createdAt: string;
+}
+
+export interface ConversationApproval {
+  id: string;
+  conversationId: string;
+  codexTurnId: string | null;
+  codexItemId: string | null;
+  codexRequestId: number | null;
+  method: string;
+  kind: string;
+  payload: Record<string, unknown>;
+  riskLevel: string;
+  decision: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
+export interface ConversationClarification {
+  id: string;
+  conversationId: string;
+  codexRequestId: number | null;
+  codexTurnId: string | null;
+  codexItemId: string | null;
+  questions: Array<Record<string, unknown>>;
+  answers: unknown;
+  status: "PENDING" | "ANSWERED" | "CANCELLED";
+  createdAt: string;
+  answeredAt: string | null;
+}
+
+export interface ConversationTurn {
+  id: string;
+  conversationId: string;
+  codexTurnId: string;
+  status: string;
+  model?: string;
+  effort?: string;
+  error?: unknown;
+  startedAtMs?: number;
+  completedAtMs?: number;
+  durationMs?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 type RequestOptions = RequestInit & { timeoutMs?: number | null };
 
 async function request<T>(url: string, init: RequestOptions = {}): Promise<T> {
@@ -357,4 +481,113 @@ export const api = {
       method: "POST",
       body: JSON.stringify(key ? { key } : {}),
     }),
+  listConversations: (projectId: string) =>
+    request<Conversation[]>(`/api/projects/${projectId}/conversations`),
+  createConversation: (
+    projectId: string,
+    input: Record<string, unknown>,
+  ) =>
+    request<Conversation>(`/api/projects/${projectId}/conversations`, {
+      method: "POST",
+      body: JSON.stringify({ ...input, projectId }),
+    }),
+  getConversation: (id: string) =>
+    request<Conversation>(`/api/conversations/${id}`),
+  updateConversation: (id: string, input: Record<string, unknown>) =>
+    request<Conversation>(`/api/conversations/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteConversation: (id: string) =>
+    request<{ deleted: boolean }>(`/api/conversations/${id}`, {
+      method: "DELETE",
+    }),
+  sendConversationMessage: (id: string, input: Record<string, unknown>) =>
+    request<{ turnId: string }>(`/api/conversations/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify(input),
+      timeoutMs: null,
+    }),
+  steerConversation: (id: string, input: Record<string, unknown>) =>
+    request(`/api/conversations/${id}/steer`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  interruptConversation: (id: string) =>
+    request<{ interrupted: boolean }>(`/api/conversations/${id}/interrupt`, {
+      method: "POST",
+    }),
+  forkConversation: (id: string, lastTurnId?: string | null) =>
+    request<Conversation>(`/api/conversations/${id}/fork`, {
+      method: "POST",
+      body: JSON.stringify({ lastTurnId }),
+    }),
+  compactConversation: (id: string) =>
+    request(`/api/conversations/${id}/compact`, { method: "POST" }),
+  archiveConversation: (id: string) =>
+    request<Conversation>(`/api/conversations/${id}/archive`, {
+      method: "POST",
+    }),
+  renameConversation: (id: string, title: string) =>
+    request<Conversation>(`/api/conversations/${id}/name`, {
+      method: "POST",
+      body: JSON.stringify({ title }),
+    }),
+  listConversationTurns: (id: string, limit = 200, offset = 0) =>
+    request<ConversationTurn[]>(
+      `/api/conversations/${id}/turns?limit=${limit}&offset=${offset}`,
+    ),
+  listConversationTurnItems: (
+    id: string,
+    turnId: string,
+    afterSeq = 0,
+    limit = 500,
+  ) =>
+    request<ConversationItem[]>(
+      `/api/conversations/${id}/turns/${turnId}/items?afterSeq=${afterSeq}&limit=${limit}`,
+    ),
+  listConversationEvents: (id: string, afterSeq = 0, limit = 1000) =>
+    request<ConversationEvent[]>(
+      `/api/conversations/${id}/events?afterSeq=${afterSeq}&limit=${limit}`,
+    ),
+  listConversationItems: (id: string, afterSeq = 0, limit = 1000) =>
+    request<ConversationItem[]>(
+      `/api/conversations/${id}/items?afterSeq=${afterSeq}&limit=${limit}`,
+    ),
+  listConversationModels: (id: string) =>
+    request<unknown>(`/api/conversations/${id}/models`),
+  listConversationApprovals: (id: string) =>
+    request<ConversationApproval[]>(`/api/conversations/${id}/approvals`),
+  decideConversationApproval: (
+    id: string,
+    approvalId: string,
+    decision: "accept" | "acceptForSession" | "decline" | "cancel",
+  ) =>
+    request<{ decided: boolean }>(
+      `/api/conversations/${id}/approvals/${approvalId}/decision`,
+      {
+        method: "POST",
+        body: JSON.stringify({ decision }),
+      },
+    ),
+  getConversationClarification: (id: string) =>
+    request<ConversationClarification | null>(
+      `/api/conversations/${id}/clarification`,
+    ),
+  answerConversationClarification: (
+    id: string,
+    clarificationId: string,
+    answers: Record<string, { answers: string[] }>,
+  ) =>
+    request<{ answered: boolean }>(`/api/conversations/${id}/clarification`, {
+      method: "POST",
+      body: JSON.stringify({ clarificationId, answers }),
+    }),
+  searchProjectFiles: (projectId: string, query: string) =>
+    request<{
+      contentItems: Array<{ type: string; text: string }>;
+      success: boolean;
+    }>(
+      `/api/projects/${projectId}/fs/search?query=${encodeURIComponent(query)}`,
+    ),
 };

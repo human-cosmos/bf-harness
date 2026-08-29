@@ -1432,9 +1432,14 @@ export function ProjectPage() {
         kicker={project ? project.name : "项目"}
         title="项目任务"
         actions={
-          <Link to={`/tasks/new?projectId=${id}`} className="btn btn-primary">
-            新建 Bugfix 任务
-          </Link>
+          <>
+            <Link to={`/projects/${id}/chat`} className="btn">
+              自由对话
+            </Link>
+            <Link to={`/tasks/new?projectId=${id}`} className="btn btn-primary">
+              新建 Bugfix 任务
+            </Link>
+          </>
         }
       />
       {project ? (
