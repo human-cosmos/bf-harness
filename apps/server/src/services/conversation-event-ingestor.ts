@@ -1,0 +1,197 @@
+import type {
+  ConversationEventKind,
+  ConversationItemType,
+} from "@bugfix-harness/shared";
+import type { AppServerRuntime } from "./app-server-runtime.js";
+import type { ConversationEventRepository } from "../repositories/conversation-event-repository.js";
+import type { ConversationItemRepository } from "../repositories/conversation-item-repository.js";
+
+interface Notification {
+  method: string;
+  params: unknown;
+}
+
+function eventKindForMethod(method: string): ConversationEventKind {
+  if (method === "turn/started") return "turn.started";
+  if (method === "turn/completed") return "turn.completed";
+  if (method === "item/started") return "raw";
+  if (method === "item/completed") return "raw";
+  if (method === "item/agentMessage/delta") return "agent.message.delta";
+  if (method === "item/reasoning/summaryTextDelta")
+    return "reasoning.summary.delta";
+  if (method === "item/reasoning/textDelta") return "reasoning.text.delta";
+  if (method === "item/plan/delta") return "plan.delta";
+  if (method === "item/commandExecution/outputDelta")
+    return "command.output.delta";
+  if (method === "process/outputDelta") return "command.output.delta";
+  if (method === "process/exited") return "command.completed";
+  if (method === "item/fileChange/patchUpdated")
+    return "fileChange.patchUpdated";
+  if (method === "item/mcpToolCall/progress") return "mcpTool.progress";
+  if (method === "thread/tokenUsage/updated") return "tokenUsage.updated";
+  if (method === "thread/compacted") return "compaction.started";
+  if (method === "warning") return "warning";
+  if (method === "error") return "error";
+  if (method === "serverRequest/resolved") return "raw";
+  return "raw";
+}
+
+function itemTypeForMethod(method: string): ConversationItemType | null {
+  if (method === "item/agentMessage/delta") return "agentMessage";
+  if (method === "item/reasoning/summaryTextDelta") return "reasoning";
+  if (method === "item/reasoning/textDelta") return "reasoning";
+  if (method === "item/plan/delta") return "plan";
+  if (method === "item/commandExecution/outputDelta")
+    return "commandExecution";
+  if (method === "item/fileChange/patchUpdated") return "fileChange";
+  if (method === "item/mcpToolCall/progress") return "mcpToolCall";
+  if (method === "thread/tokenUsage/updated") return "tokenUsage";
+  return null;
+}
+
+export class ConversationEventIngestor {
+  private readonly itemByCodexId = new Map<string, string>();
+
+  constructor(
+    private readonly events: ConversationEventRepository,
+    private readonly items: ConversationItemRepository,
+    private readonly conversationId: string,
+  ) {}
+
+  attach(runtime: AppServerRuntime): () => void {
+    const listener = (notification: Notification) => {
+      this.ingest(runtime, notification);
+    };
+    runtime.on("notification", listener);
+    return () => runtime.off("notification", listener);
+  }
+
+  private ingest(runtime: AppServerRuntime, notification: Notification): void {
+    const data = (notification.params ?? {}) as Record<string, unknown>;
+    const threadId = data.threadId
+      ? String(data.threadId)
+      : runtime.currentThreadId;
+    const turnId = data.turnId ? String(data.turnId) : runtime.currentTurnId;
+    const itemId = data.itemId ? String(data.itemId) : null;
+    const method = notification.method;
+
+    this.events.append({
+      conversationId: this.conversationId,
+      codexThreadId: threadId,
+      codexTurnId: turnId,
+      codexItemId: itemId,
+      kind: eventKindForMethod(method),
+      method,
+      payload: data,
+      emittedAtMs: Date.now(),
+    });
+
+    this.ingestItem(method, data, threadId, turnId, itemId);
+  }
+
+  private ingestItem(
+    method: string,
+    data: Record<string, unknown>,
+    threadId: string | null,
+    turnId: string | null,
+    itemId: string | null,
+  ): void {
+    if (method === "item/started") {
+      const codexItem = data.item as Record<string, unknown> | undefined;
+      const type = this.normalizeItemType(codexItem);
+      if (!type || !itemId) return;
+      const created = this.items.create({
+        conversationId: this.conversationId,
+        codexTurnId: turnId,
+        codexItemId: itemId,
+        itemType: type,
+        role: this.roleForItem(codexItem),
+        author: codexItem?.author ? String(codexItem.author) : null,
+        title: codexItem?.title ? String(codexItem.title) : null,
+        status: "inProgress",
+        payload: codexItem ?? data,
+      });
+      this.itemByCodexId.set(itemId, created.id);
+      return;
+    }
+
+    if (method === "item/completed") {
+      const codexItem = data.item as Record<string, unknown> | undefined;
+      const type = this.normalizeItemType(codexItem);
+      const storedId = itemId ? this.itemByCodexId.get(itemId) : null;
+      if (storedId) {
+        this.items.update(storedId, {
+          status: "completed",
+          payload: codexItem ?? data,
+          completedAtMs: Date.now(),
+        });
+      } else if (type && itemId) {
+        const created = this.items.create({
+          conversationId: this.conversationId,
+          codexTurnId: turnId,
+          codexItemId: itemId,
+          itemType: type,
+          role: this.roleForItem(codexItem),
+          author: codexItem?.author ? String(codexItem.author) : null,
+          title: codexItem?.title ? String(codexItem.title) : null,
+          status: "completed",
+          payload: codexItem ?? data,
+          createdAtMs: Date.now(),
+        });
+        this.itemByCodexId.set(itemId, created.id);
+      }
+      return;
+    }
+
+    const type = itemTypeForMethod(method);
+    if (!type) return;
+
+    const storedId = itemId ? this.itemByCodexId.get(itemId) : null;
+    if (storedId) {
+      this.items.update(storedId, { payload: data, status: "inProgress" });
+      return;
+    }
+
+    const created = this.items.create({
+      conversationId: this.conversationId,
+      codexTurnId: turnId,
+      codexItemId: itemId,
+      itemType: type,
+      role: type === "agentMessage" ? "assistant" : null,
+      status: "inProgress",
+      payload: data,
+    });
+    if (itemId) {
+      this.itemByCodexId.set(itemId, created.id);
+    }
+  }
+
+  private normalizeItemType(
+    item: Record<string, unknown> | undefined,
+  ): ConversationItemType | null {
+    if (!item?.type) return null;
+    const raw = String(item.type);
+    const aliases: Record<string, ConversationItemType> = {
+      agentMessage: "agentMessage",
+      userMessage: "userMessage",
+      reasoning: "reasoning",
+      plan: "plan",
+      commandExecution: "commandExecution",
+      fileChange: "fileChange",
+      mcpToolCall: "mcpToolCall",
+      dynamicToolCall: "dynamicToolCall",
+      webSearch: "webSearch",
+      imageGeneration: "imageGeneration",
+      contextCompaction: "contextCompaction",
+      tokenUsage: "tokenUsage",
+    };
+    return aliases[raw] ?? null;
+  }
+
+  private roleForItem(item: Record<string, unknown> | undefined): string | null {
+    if (item?.role) return String(item.role);
+    if (item?.type === "agentMessage") return "assistant";
+    if (item?.type === "userMessage") return "user";
+    return null;
+  }
+}

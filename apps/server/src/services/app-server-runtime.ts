@@ -30,8 +30,8 @@ export interface RuntimeMessage {
 export interface ThreadStartInput {
   cwd: string;
   sandbox: "read-only" | "workspace-write" | "danger-full-access";
-  approvalPolicy?: "on-request" | "never";
-  approvalsReviewer?: "user" | "auto-review";
+  approvalPolicy?: "on-request" | "never" | "untrusted" | "granular";
+  approvalsReviewer?: "user" | "auto-review" | "auto_review" | "guardian_subagent";
   ephemeral?: boolean;
   baseInstructions?: string;
   developerInstructions?: string;
@@ -39,11 +39,13 @@ export interface ThreadStartInput {
 
 export interface TurnStartInput {
   threadId: string;
-  input: Array<{ type: "text"; text: string }>;
+  input: unknown[];
   outputSchema?: Record<string, unknown>;
   planMode?: boolean;
-  approvalPolicy?: "on-request" | "never";
-  approvalsReviewer?: "user" | "auto-review";
+  approvalPolicy?: "on-request" | "never" | "untrusted" | "granular";
+  approvalsReviewer?: "user" | "auto-review" | "auto_review" | "guardian_subagent";
+  model?: string | null;
+  effort?: string | null;
   sandboxPolicy?: {
     type: "readOnly" | "workspaceWrite" | "dangerFullAccess";
     networkAccess?: boolean;
@@ -219,8 +221,8 @@ export class AppServerRuntime extends EventEmitter {
   async resumeThread(
     threadId: string,
     overrides: {
-      approvalPolicy?: "on-request" | "never";
-      approvalsReviewer?: "user" | "auto-review";
+      approvalPolicy?: "on-request" | "never" | "untrusted" | "granular";
+      approvalsReviewer?: "user" | "auto-review" | "auto_review" | "guardian_subagent";
       baseInstructions?: string;
       developerInstructions?: string;
     } = {},
@@ -261,6 +263,8 @@ export class AppServerRuntime extends EventEmitter {
       collaborationMode,
       approvalPolicy: input.approvalPolicy ?? "on-request",
       approvalsReviewer: input.approvalsReviewer ?? "user",
+      model: input.model,
+      effort: input.effort,
       sandboxPolicy: input.sandboxPolicy,
     });
     this.currentTurnId =
@@ -270,6 +274,94 @@ export class AppServerRuntime extends EventEmitter {
 
   async interrupt(threadId: string, turnId: string): Promise<unknown> {
     return this.rpc("turn/interrupt", { threadId, turnId });
+  }
+
+  async steerTurn(
+    threadId: string,
+    turnId: string,
+    input: unknown[],
+  ): Promise<unknown> {
+    return this.rpc("turn/steer", { threadId, turnId, input });
+  }
+
+  async readThread(
+    threadId: string,
+    includeTurns = false,
+  ): Promise<unknown> {
+    return this.rpc("thread/read", { threadId, includeTurns });
+  }
+
+  async listTurns(
+    threadId: string,
+    options: {
+      cursor?: string | null;
+      limit?: number | null;
+      sortDirection?: "asc" | "desc" | null;
+    } = {},
+  ): Promise<unknown> {
+    return this.rpc("thread/turns/list", {
+      threadId,
+      cursor: options.cursor ?? null,
+      limit: options.limit ?? null,
+      sortDirection: options.sortDirection ?? null,
+    });
+  }
+
+  async listItems(
+    threadId: string,
+    options: {
+      turnId?: string | null;
+      cursor?: string | null;
+      limit?: number | null;
+      sortDirection?: "asc" | "desc" | null;
+    } = {},
+  ): Promise<unknown> {
+    return this.rpc("thread/items/list", {
+      threadId,
+      turnId: options.turnId ?? null,
+      cursor: options.cursor ?? null,
+      limit: options.limit ?? null,
+      sortDirection: options.sortDirection ?? null,
+    });
+  }
+
+  async forkThread(
+    threadId: string,
+    options: { lastTurnId?: string | null; excludeTurns?: boolean } = {},
+  ): Promise<unknown> {
+    return this.rpc("thread/fork", {
+      threadId,
+      lastTurnId: options.lastTurnId ?? null,
+      excludeTurns: options.excludeTurns ?? false,
+    });
+  }
+
+  async archiveThread(threadId: string): Promise<unknown> {
+    return this.rpc("thread/archive", { threadId });
+  }
+
+  async setThreadName(threadId: string, name: string): Promise<unknown> {
+    return this.rpc("thread/name/set", { threadId, name });
+  }
+
+  async compactThread(threadId: string): Promise<unknown> {
+    return this.rpc("thread/compact/start", { threadId });
+  }
+
+  async listModels(options: { limit?: number | null } = {}): Promise<unknown> {
+    return this.rpc("model/list", {
+      cursor: null,
+      limit: options.limit ?? null,
+      includeHidden: false,
+    });
+  }
+
+  async fuzzyFileSearch(
+    params: { cwd?: string; query: string },
+  ): Promise<unknown> {
+    return this.rpc("fuzzyFileSearch", {
+      ...params,
+    });
   }
 
   async waitForTurnCompletion(
