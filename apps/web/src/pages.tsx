@@ -1764,150 +1764,187 @@ export function NewTaskPage() {
           </div>
         </div>
       ) : (
-        <form className="form" onSubmit={submit}>
-          <div className="card form-card">
-            <div className="form-section">
-              <div className="form-section-heading">
-                <h2>1. 基本信息</h2>
-                <span className="field-hint">必填项会直接影响分析质量</span>
+        <>
+          <p className="new-task-intro">描述清楚问题，Codex 会完成定位、修复与验证。</p>
+          <form className="form new-task-form" onSubmit={submit}>
+            <div className="card form-card">
+              <div className="form-section">
+                <div className="form-section-heading">
+                  <div className="form-section-title">
+                    <span className="form-section-tag">描述</span>
+                    <h2>这个问题是什么</h2>
+                  </div>
+                  <span className="field-hint">项目与问题描述是必填项</span>
+                </div>
+                <div className="ticket-grid">
+                  <label className="field">
+                    <span className="field-label">
+                      标题 <span className="optional-mark">选填</span>
+                    </span>
+                    <input
+                      className="title-input"
+                      value={title}
+                      onChange={(event) => setTitle(event.target.value)}
+                      placeholder="例如：登录后刷新页面会丢失会话"
+                    />
+                    <span className="field-hint">留空会根据问题描述自动生成</span>
+                  </label>
+                  <label className="field">
+                    <span className="field-label">
+                      项目 <span className="required-mark">必填</span>
+                    </span>
+                    <select
+                      name="projectId"
+                      required
+                      aria-label="项目"
+                      value={projectId}
+                      onChange={(event) => setProjectId(event.target.value)}
+                    >
+                      <option value="" disabled>
+                        请选择项目
+                      </option>
+                      {projects.map((project) => (
+                        <option key={project.id} value={project.id}>
+                          {project.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="field">
+                  <span className="field-label">
+                    问题描述 <span className="required-mark">必填</span>
+                  </span>
+                  <textarea
+                    className="description-input"
+                    name="bugDescription"
+                    required
+                    aria-label="问题描述"
+                    value={bugDescription}
+                    onChange={(event) => setBugDescription(event.target.value)}
+                    placeholder="用你自己的话描述：哪里出问题、触发了什么现象。"
+                  />
+                  <span className="field-hint">一段话概括即可，Codex 会据此展开分析。</span>
+                </label>
               </div>
-            <label className="field">
-              项目 <span className="required-mark">必填</span>
-              <select
-                name="projectId"
-                required
-                aria-label="项目"
-                value={projectId}
-                onChange={(event) => setProjectId(event.target.value)}
-              >
-                <option value="" disabled>
-                  请选择项目
-                </option>
-                {projects.map((project) => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              问题描述 <span className="required-mark">必填</span>
-              <textarea
-                name="bugDescription"
-                required
-                aria-label="问题描述"
-                value={bugDescription}
-                onChange={(event) => setBugDescription(event.target.value)}
-                placeholder="用你自己的话描述遇到了什么问题。例如：登录页点击提交后一直转圈，但提示信息不完整。"
-              />
-              <span className="field-hint">
-                这是必填项。标题会根据问题描述自动生成，也可在下方手动指定。
-              </span>
-            </label>
-            <label className="field">
-              标题（选填）
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="留空则自动生成"
-              />
-            </label>
-            </div>
 
-            <div className="form-section">
-              <div className="form-section-heading">
-                <h2>2. 问题现状</h2>
-                <span className="field-hint">帮助 Codex 建立清晰的目标</span>
+              <div className="form-section">
+                <div className="form-section-heading">
+                  <div className="form-section-title">
+                    <span className="form-section-tag">行为</span>
+                    <h2>实际与期望</h2>
+                  </div>
+                  <span className="field-hint">清晰的目标能显著提高修复质量</span>
+                </div>
+                <div className="two-column-fields behavior-fields">
+                  <label className="field field-actual">
+                    <span className="field-label">
+                      <span className="diff-sign minus" aria-hidden="true">-</span>
+                      当前行为
+                    </span>
+                    <textarea
+                      value={observedBehavior}
+                      onChange={(event) => setObservedBehavior(event.target.value)}
+                      placeholder="实际发生了什么"
+                    />
+                  </label>
+                  <label className="field field-expected">
+                    <span className="field-label">
+                      <span className="diff-sign plus" aria-hidden="true">+</span>
+                      期望行为
+                    </span>
+                    <textarea
+                      value={expectedBehavior}
+                      onChange={(event) => setExpectedBehavior(event.target.value)}
+                      placeholder="应该发生什么"
+                    />
+                  </label>
+                </div>
               </div>
-            <div className="two-column-fields">
-              <label className="field">
-                当前行为
-                <textarea
-                  value={observedBehavior}
-                  onChange={(event) => setObservedBehavior(event.target.value)}
-                  placeholder="实际发生了什么"
-                />
-              </label>
-              <label className="field">
-                期望行为
-                <textarea
-                  value={expectedBehavior}
-                  onChange={(event) => setExpectedBehavior(event.target.value)}
-                  placeholder="应该发生什么"
-                />
-              </label>
-            </div>
-            </div>
 
-            <div className="form-section">
-              <div className="form-section-heading">
-                <h2>3. 复现与上下文</h2>
-                <span className="field-hint">尽量补充，可以显著提高定位准确率</span>
+              <div className="form-section">
+                <div className="form-section-heading">
+                  <div className="form-section-title">
+                    <span className="form-section-tag">复现</span>
+                    <h2>如何触发</h2>
+                  </div>
+                  <span className="field-hint">尽量补充，可显著提高定位准确率</span>
+                </div>
+                <label className="field">
+                  <span className="field-label">复现步骤</span>
+                  <textarea
+                    value={reproductionSteps}
+                    onChange={(event) => setReproductionSteps(event.target.value)}
+                    placeholder="按步骤描述如何复现，一行一步"
+                  />
+                </label>
+                <label className="field">
+                  <span className="field-label">复现命令</span>
+                  <input
+                    className="mono-input"
+                    value={reproductionCommand}
+                    onChange={(event) => setReproductionCommand(event.target.value)}
+                    placeholder="npm run test path/to/case"
+                  />
+                </label>
+                <div className="two-column-fields">
+                  <label className="field">
+                    <span className="field-label">相关文件</span>
+                    <textarea
+                      className="mono-input"
+                      value={relatedFiles}
+                      onChange={(event) => setRelatedFiles(event.target.value)}
+                      placeholder="每行一个路径，例如 src/app/login.ts"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">相关日志</span>
+                    <textarea
+                      className="mono-input"
+                      value={logs}
+                      onChange={(event) => setLogs(event.target.value)}
+                      placeholder="粘贴错误日志、堆栈或关键上下文"
+                    />
+                  </label>
+                </div>
               </div>
-            <label className="field">
-              复现步骤
-              <textarea
-                value={reproductionSteps}
-                onChange={(event) => setReproductionSteps(event.target.value)}
-                placeholder="按步骤描述如何复现"
-              />
-            </label>
-            <label className="field">
-              复现命令
-              <input
-                value={reproductionCommand}
-                onChange={(event) => setReproductionCommand(event.target.value)}
-                placeholder="例如：npm run test path/to/case"
-              />
-            </label>
-            <label className="field">
-              相关日志（选填）
-              <textarea
-                value={logs}
-                onChange={(event) => setLogs(event.target.value)}
-                placeholder="粘贴错误日志、堆栈或关键上下文"
-              />
-            </label>
-            <label className="field">
-              相关文件（每行一个）
-              <textarea
-                value={relatedFiles}
-                onChange={(event) => setRelatedFiles(event.target.value)}
-                placeholder="src/app/login.ts"
-              />
-            </label>
-            </div>
 
-            <div className="form-section">
-              <div className="form-section-heading">
-                <h2>4. 验收与约束</h2>
-                <span className="field-hint">决定这次修复怎样算完成</span>
+              <div className="form-section">
+                <div className="form-section-heading">
+                  <div className="form-section-title">
+                    <span className="form-section-tag">验收</span>
+                    <h2>怎样算修好</h2>
+                  </div>
+                  <span className="field-hint">决定这次修复怎样算完成</span>
+                </div>
+                <div className="two-column-fields">
+                  <label className="field">
+                    <span className="field-label">验收条件</span>
+                    <textarea
+                      value={acceptanceCriteria}
+                      onChange={(event) => setAcceptanceCriteria(event.target.value)}
+                      placeholder="每行一条，例如：提交后 1 秒内返回结果"
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">约束条件</span>
+                    <textarea
+                      value={constraints}
+                      onChange={(event) => setConstraints(event.target.value)}
+                      placeholder="每行一条，例如：不要修改数据库结构"
+                    />
+                  </label>
+                </div>
               </div>
-            <label className="field">
-              验收条件（每行一个）
-              <textarea
-                value={acceptanceCriteria}
-                onChange={(event) => setAcceptanceCriteria(event.target.value)}
-                placeholder="例如：提交后能在 1 秒内返回结果"
-              />
-            </label>
-            <label className="field">
-              约束条件（每行一个）
-              <textarea
-                value={constraints}
-                onChange={(event) => setConstraints(event.target.value)}
-                placeholder="例如：不要修改数据库结构"
-              />
-            </label>
             </div>
-          </div>
-          <ErrorNotice message={error} />
-          <div className="form-actions">
-            <button className="btn-primary" type="submit" disabled={busy}>
-              {busy ? "创建中..." : "创建"}
-            </button>
-          </div>
-        </form>
+            <ErrorNotice message={error} />
+            <div className="form-actions">
+              <button className="btn-primary" type="submit" disabled={busy}>
+                {busy ? "创建中..." : "创建任务"}
+              </button>
+            </div>
+          </form>
+        </>
       )}
     </section>
   );
@@ -1922,6 +1959,9 @@ export function TaskDetailPage() {
   const [message, setMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [clarificationOpen, setClarificationOpen] = useState(false);
+  const [dismissedClarification, setDismissedClarification] = useState<
+    number | null
+  >(null);
   const { connected, reconnecting, events } = useHarnessEvents(id);
   const { ask, confirmDialog } = useConfirmDialog();
 
@@ -1931,6 +1971,13 @@ export function TaskDetailPage() {
       void refresh();
     }
   }, [latestEvent, refresh]);
+
+  useEffect(() => {
+    const clarification = state?.attention.clarification;
+    if (clarification && clarification.requestId !== dismissedClarification) {
+      setClarificationOpen(true);
+    }
+  }, [state?.attention.clarification, dismissedClarification]);
 
   useEffect(() => {
     if (location.hash === "#clarification" && state?.attention.clarification) {
@@ -2128,11 +2175,17 @@ export function TaskDetailPage() {
           clarification={state.attention.clarification}
           onAnswered={() => {
             setClarificationOpen(false);
+            setDismissedClarification(
+              state?.attention.clarification?.requestId ?? null,
+            );
             navigate(`/tasks/${id}`, { replace: true });
             refresh();
           }}
           onClose={() => {
             setClarificationOpen(false);
+            setDismissedClarification(
+              state?.attention.clarification?.requestId ?? null,
+            );
             navigate(`/tasks/${id}`, { replace: true });
           }}
         />

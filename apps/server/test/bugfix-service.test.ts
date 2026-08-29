@@ -218,4 +218,73 @@ describe("BugfixService", () => {
       db.close();
     }
   });
+
+  it("refreshes baseCommit and publishes worktree.ready when directory and branch are gone", async () => {
+    const { db, service, worktreeRoot } = createService();
+    const repo = mkdtempSync(join(tmpdir(), "bugfix-service-repo-"));
+    try {
+      execFileSync("git", ["init", repo]);
+      execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+      execFileSync("git", ["-C", repo, "config", "user.name", "Test"]);
+      writeFileSync(join(repo, "README.md"), "# test\n");
+      execFileSync("git", ["-C", repo, "add", "README.md"]);
+      execFileSync("git", ["-C", repo, "commit", "-m", "baseline"]);
+
+      const project = await service.createProject({
+        name: "recreate-branch",
+        repoPath: repo,
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [repo],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+
+      const first = await service.prepareWorktree(task.id);
+      const firstCommit = first.baseCommit;
+
+      execFileSync("git", ["-C", repo, "worktree", "remove", "--force", first.path]);
+      execFileSync("git", ["-C", repo, "branch", "-D", first.branch]);
+      writeFileSync(join(repo, "README.md"), "# test v2\n");
+      execFileSync("git", ["-C", repo, "add", "README.md"]);
+      execFileSync("git", ["-C", repo, "commit", "-m", "advance"]);
+      const newHead = execFileSync("git", [
+        "-C",
+        repo,
+        "rev-parse",
+        "HEAD",
+      ])
+        .toString()
+        .trim();
+
+      const events: string[] = [];
+      const unsubscribe = service.events.subscribe((event) => {
+        if (event.taskId === task.id && event.type === "worktree.ready") {
+          events.push(event.type);
+        }
+      });
+
+      const second = await service.prepareWorktree(task.id);
+      unsubscribe();
+
+      expect(second.id).toBe(first.id);
+      expect(second.status).toBe("READY");
+      expect(second.baseCommit).toBe(newHead);
+      expect(second.baseCommit).not.toBe(firstCommit);
+      expect(events).toContain("worktree.ready");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
 });

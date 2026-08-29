@@ -7,6 +7,7 @@ import {
   type PromptTemplateKey,
   type RepairPlan,
   type TaskStatus,
+  type Worktree,
   unknownPromptTemplatePlaceholders,
 } from "@bugfix-harness/shared";
 import { existsSync } from "node:fs";
@@ -688,24 +689,33 @@ export class BugfixService {
       root: this.worktreeRoot,
     });
 
+    let worktree: Worktree;
     if (existing) {
+      // The directory was gone, so recreate against the stored record: refresh
+      // its location/base commit and report it as ready (same as a fresh one).
+      this.worktrees.updateLocation(existing.id, {
+        path: result.path,
+        baseCommit: result.baseCommit,
+        branch: result.branch,
+      });
       this.worktrees.updateStatus(existing.id, "READY");
-      return this.worktrees.getByTaskId(taskId)!;
+      worktree = this.worktrees.getByTaskId(task.id)!;
+    } else {
+      worktree = this.worktrees.create({
+        taskId: task.id,
+        projectId: project.id,
+        path: result.path,
+        baseCommit: result.baseCommit,
+        branch: result.branch,
+      });
+      this.worktrees.updateStatus(worktree.id, "READY");
     }
 
-    const worktree = this.worktrees.create({
-      taskId: task.id,
-      projectId: project.id,
-      path: result.path,
-      baseCommit: result.baseCommit,
-      branch: result.branch,
-    });
-    this.worktrees.updateStatus(worktree.id, "READY");
     this.events.publish({
       type: "worktree.ready",
       taskId: task.id,
       payload: worktree,
     });
-    return this.worktrees.getByTaskId(task.id)!;
+    return worktree;
   }
 }

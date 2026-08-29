@@ -73,6 +73,17 @@ export class WorktreeRepository {
       .run(status, error ?? null, new Date().toISOString(), id);
   }
 
+  updateLocation(
+    id: string,
+    input: { path: string; baseCommit: string; branch: string },
+  ): void {
+    this.db
+      .prepare(
+        "UPDATE worktrees SET path = ?, base_commit = ?, branch = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(input.path, input.baseCommit, input.branch, new Date().toISOString(), id);
+  }
+
   getByTaskId(taskId: string): Worktree | undefined {
     const row = this.db
       .prepare("SELECT * FROM worktrees WHERE task_id = ? ORDER BY created_at DESC")

@@ -92,7 +92,33 @@ describe("DiffService", () => {
     }
   });
 
-  it("expands untracked directories into individual files", async () => {
+  it("reports a staged-then-edited new file as added (AM)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "bugfix-diff-"));
+    const repo = join(root, "repo");
+    try {
+      git(["init", repo]);
+      git(["-C", repo, "config", "user.email", "spike@example.com"]);
+      git(["-C", repo, "config", "user.name", "Spike"]);
+      writeFileSync(join(repo, "seed.txt"), "one\n");
+      git(["-C", repo, "add", "seed.txt"]);
+      git(["-C", repo, "commit", "-m", "baseline"]);
+
+      writeFileSync(join(repo, "added.txt"), "one\n");
+      git(["-C", repo, "add", "added.txt"]);
+      writeFileSync(join(repo, "added.txt"), "two\n");
+
+      const result = await new DiffService().generate(repo);
+      const added = result.files.find((file) => file.path === "added.txt");
+
+      expect(added?.status).toBe("added");
+      expect(result.stats.added).toBe(1);
+      expect(result.stats.modified).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("collapses untracked directories instead of expanding every file", async () => {
     const root = mkdtempSync(join(tmpdir(), "bugfix-diff-"));
     const repo = join(root, "repo");
     try {
@@ -112,19 +138,17 @@ describe("DiffService", () => {
       const result = await new DiffService().generate(repo);
       const paths = result.files.map((file) => file.path);
 
-      expect(paths).toEqual(
-        expect.arrayContaining([
-          "src/index.js",
-          "src/util.js",
-          "test/index.test.js",
-        ]),
-      );
-      expect(paths).not.toContain("src/");
-      expect(paths).not.toContain("test/");
-      expect(result.stats.untracked).toBe(3);
-      expect(result.unifiedDiff).toContain("src/index.js");
-      expect(result.unifiedDiff).toContain("src/util.js");
-      expect(result.unifiedDiff).toContain("test/index.test.js");
+      // Untracked directories are reported as collapsed entries and their
+      // contents are not expanded or diffed, avoiding one git subprocess per
+      // contained file (which blows up for vendored trees like node_modules).
+      expect(paths).toEqual(expect.arrayContaining(["src/", "test/"]));
+      expect(paths).not.toContain("src/index.js");
+      expect(paths).not.toContain("src/util.js");
+      expect(paths).not.toContain("test/index.test.js");
+      expect(result.stats.untracked).toBe(2);
+      expect(result.unifiedDiff).not.toContain("src/index.js");
+      expect(result.unifiedDiff).not.toContain("src/util.js");
+      expect(result.unifiedDiff).not.toContain("test/index.test.js");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
