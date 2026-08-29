@@ -7,6 +7,7 @@ import {
   stepIndexForStatus,
   WORKFLOW_STEPS,
 } from "./workflow-model.js";
+import { TaskRail } from "./TaskRail.js";
 
 function Badge({
   tone = "neutral",
@@ -26,7 +27,10 @@ function StatusBadge({ status }: { status: keyof typeof STATUS_META }) {
 function AttentionPanel({ state }: { state: WorkflowState }) {
   const items: Array<{ label: string; href: string }> = [];
   if (state.attention.clarification) {
-    items.push({ label: "Codex 正在等待你补充分析信息", href: `/tasks/${state.task.id}` });
+    items.push({
+      label: "Codex 正在等待你补充分析信息",
+      href: `/tasks/${state.task.id}#clarification`,
+    });
   }
   if (state.attention.planApproval?.status === "PENDING") {
     items.push({ label: "修复计划等待你确认", href: `/tasks/${state.task.id}/plan` });
@@ -175,68 +179,70 @@ export function TaskShell({
               <div className="workflow-step-dot" aria-hidden="true">
                 {completed ? "✓" : index + 1}
               </div>
-              <div className="workflow-step-copy">
-                <span className="workflow-step-label">{step.label}</span>
-                <span className="workflow-step-hint">{step.hint}</span>
-              </div>
+              <span className="workflow-step-label">{step.label}</span>
             </div>
           );
         })}
       </div>
 
-      <div className="next-action-banner">
-        <div>
-          <span className="next-action-kicker">当前需要你做</span>
-          <h2>{nextAction.label}</h2>
-          <p className="muted">{nextAction.description}</p>
-        </div>
-        {primaryAction ? (
-          primaryAction
-        ) : isCurrentActionPage ? (
-          <span className="next-action-current">当前正在处理</span>
-        ) : nextAction.key !== "none" ? (
-          <Link to={nextAction.href} className="btn btn-primary">
-            {nextAction.label}
-          </Link>
-        ) : (
-          <Link to={`/tasks/${state.task.id}`} className="btn">
-            查看任务详情
-          </Link>
-        )}
-      </div>
-
-      {isTaskDetail ? <AttentionPanel state={state} /> : null}
-
-      {runningJob ? (
-        <div className="job-progress" role="status">
-          <span className="spinner" aria-hidden="true" />
-          <div>
-            <strong>{runningJob.message}</strong>
-            <span className="muted">
-              {runningJob.kind === "implement" || runningJob.kind === "continue-fix"
-                ? "Codex 正在工作，完成后会自动刷新状态。"
-                : "后台任务执行中，完成后会自动刷新状态。"}
-            </span>
+      <div className="task-layout">
+        <TaskRail state={state} />
+        <div className="task-body">
+          <div className="next-action-banner">
+            <div>
+              <span className="next-action-kicker">当前需要你做</span>
+              <h2>{nextAction.label}</h2>
+              <p className="muted">{nextAction.description}</p>
+            </div>
+            {primaryAction ? (
+              primaryAction
+            ) : isCurrentActionPage ? (
+              <span className="next-action-current">当前正在处理</span>
+            ) : nextAction.key !== "none" ? (
+              <Link to={nextAction.href} className="btn btn-primary">
+                {nextAction.label}
+              </Link>
+            ) : (
+              <Link to={`/tasks/${state.task.id}`} className="btn">
+                查看任务详情
+              </Link>
+            )}
           </div>
-        </div>
-      ) : null}
 
-      {latestFailedJob ? (
-        <div className="notice notice-error" role="alert">
-          {latestFailedJob.message}
-          {latestFailedJob.error ? `：${latestFailedJob.error}` : ""}
-        </div>
-      ) : null}
+          {isTaskDetail ? <AttentionPanel state={state} /> : null}
 
-      {error ? <div className="notice notice-error">{error}</div> : null}
-      {loading ? (
-        <div className="loading" role="status">
-          <span className="spinner" aria-hidden="true" />
-          <span className="muted">正在同步最新状态...</span>
+          {runningJob ? (
+            <div className="job-progress" role="status">
+              <span className="spinner" aria-hidden="true" />
+              <div>
+                <strong>{runningJob.message}</strong>
+                <span className="muted">
+                  {runningJob.kind === "implement" || runningJob.kind === "continue-fix"
+                    ? "Codex 正在工作，完成后会自动刷新状态。"
+                    : "后台任务执行中，完成后会自动刷新状态。"}
+                </span>
+              </div>
+            </div>
+          ) : null}
+
+          {latestFailedJob ? (
+            <div className="notice notice-error" role="alert">
+              {latestFailedJob.message}
+              {latestFailedJob.error ? `：${latestFailedJob.error}` : ""}
+            </div>
+          ) : null}
+
+          {error ? <div className="notice notice-error">{error}</div> : null}
+          {loading ? (
+            <div className="loading" role="status">
+              <span className="spinner" aria-hidden="true" />
+              <span className="muted">正在同步最新状态...</span>
+            </div>
+          ) : (
+            children
+          )}
         </div>
-      ) : (
-        children
-      )}
+      </div>
     </section>
   );
 }

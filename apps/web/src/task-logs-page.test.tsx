@@ -92,7 +92,9 @@ describe("TaskLogsPage", () => {
     );
 
     expect(await screen.findByText("任务状态更新为：IMPLEMENTING")).toBeTruthy();
-    expect(screen.getByText("运行日志")).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "运行日志" }),
+    ).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", {

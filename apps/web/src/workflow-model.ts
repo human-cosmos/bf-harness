@@ -28,41 +28,14 @@ export const STATUS_META: Record<
 export interface WorkflowStep {
   key: StepKey;
   label: string;
-  hint: string;
-  href: string;
 }
 
 export const WORKFLOW_STEPS: WorkflowStep[] = [
-  {
-    key: "analyze",
-    label: "分析",
-    hint: "让 Codex 分析问题并生成修复计划",
-    href: "plan",
-  },
-  {
-    key: "plan",
-    label: "计划确认",
-    hint: "确认 Codex 提出的修复计划",
-    href: "plan",
-  },
-  {
-    key: "implement",
-    label: "实施",
-    hint: "让 Codex 修改代码并处理审批",
-    href: "approvals",
-  },
-  {
-    key: "validate",
-    label: "验证",
-    hint: "检查改动和自动验证结果",
-    href: "diff",
-  },
-  {
-    key: "accept",
-    label: "验收",
-    hint: "查看验收报告并做最终决定",
-    href: "report",
-  },
+  { key: "analyze", label: "分析" },
+  { key: "plan", label: "计划确认" },
+  { key: "implement", label: "实施" },
+  { key: "validate", label: "验证" },
+  { key: "accept", label: "验收" },
 ];
 
 const statusStep: Record<TaskStatus, StepKey | null> = {
@@ -135,7 +108,7 @@ export function nextActionForState(state: WorkflowState): NextAction {
         key: "submit-clarification",
         label: "补充分析信息",
         description: "Codex 需要你补充信息后继续分析。",
-        href: `/tasks/${state.task.id}`,
+        href: `/tasks/${state.task.id}#clarification`,
         primary: true,
       };
     }
@@ -255,4 +228,43 @@ export function isActiveStatus(status: TaskStatus): boolean {
     "WAITING_FOR_ACCEPTANCE",
     "BLOCKED",
   ].includes(status);
+}
+
+export type TaskSectionKey =
+  | "detail"
+  | "plan"
+  | "approvals"
+  | "diff"
+  | "report"
+  | "logs";
+
+export interface TaskSection {
+  key: TaskSectionKey;
+  label: string;
+  path: string;
+}
+
+export const TASK_SECTIONS: TaskSection[] = [
+  { key: "detail", label: "详情", path: "" },
+  { key: "plan", label: "修复计划", path: "/plan" },
+  { key: "approvals", label: "操作审批", path: "/approvals" },
+  { key: "diff", label: "变更与检查", path: "/diff" },
+  { key: "report", label: "验收报告", path: "/report" },
+  { key: "logs", label: "运行日志", path: "/logs" },
+];
+
+export function sectionAttention(
+  state: WorkflowState,
+): Partial<Record<TaskSectionKey, number>> {
+  const badges: Partial<Record<TaskSectionKey, number>> = {};
+  if (state.attention.clarification) badges.detail = 1;
+  if (state.attention.planApproval?.status === "PENDING") badges.plan = 1;
+  if (state.attention.pendingApprovals > 0) {
+    badges.approvals = state.attention.pendingApprovals;
+  }
+  const failed =
+    state.attention.validation.failed + state.attention.validation.timeout;
+  if (failed > 0) badges.diff = failed;
+  if (state.task.status === "WAITING_FOR_ACCEPTANCE") badges.report = 1;
+  return badges;
 }

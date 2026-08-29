@@ -1,6 +1,8 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -31,7 +33,7 @@ import {
   type ValidationCommand,
   type ValidationOutcome,
 } from "./api.js";
-import { MAX_PROMPT_TEMPLATE_LENGTH } from "@bugfix-harness/shared";
+import { decodeGitPath, MAX_PROMPT_TEMPLATE_LENGTH } from "@bugfix-harness/shared";
 import { useHarnessEvents } from "./use-harness-events.js";
 import { useWorkflowState } from "./use-workflow-state.js";
 import { TaskShell } from "./TaskShell.js";
@@ -290,14 +292,21 @@ function SuccessNotice({ message }: { message: string }) {
 function ClarificationPanel({
   clarification,
   onAnswered,
+  onClose,
 }: {
   clarification: PendingClarification;
   onAnswered: () => void;
+  onClose?: () => void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
 
   async function submit(skip = false) {
     setBusy(true);
@@ -397,37 +406,64 @@ function ClarificationPanel({
   }
 
   return (
-    <div className="card notice-card">
-      <div className="card-head">
-        <h2>分析阶段需要补充信息</h2>
-      </div>
-      <p className="muted">
-        Codex 在分析时遇到不明确的信息，请根据实际情况补充后继续。
-      </p>
-      <div className="clarification-progress">
-        <span>
-          已填写 {answeredCount} / {clarification.questions.length}
-        </span>
-        <span className="muted">未填写的项会交给 Codex 继续推断</span>
-      </div>
-      {clarification.questions.map(renderQuestion)}
-      <ErrorNotice message={error} />
-      <div className="form-actions">
-        <button
-          className="btn-primary"
-          type="button"
-          disabled={busy}
-          onClick={() => submit(false)}
-        >
-          {busy ? "提交中..." : "提交并继续分析（空项按跳过）"}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => submit(true)}
-        >
-          {busy ? "提交中..." : "暂时跳过，让 Codex 继续推断"}
-        </button>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="dialog clarification-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="clarification-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && onClose && !busy) {
+            onClose();
+          }
+        }}
+      >
+        <div className="card-head">
+          <h2 id="clarification-dialog-title">分析阶段需要补充信息</h2>
+          {onClose ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          ) : null}
+        </div>
+        <p className="muted">
+          Codex 在分析时遇到不明确的信息，请根据实际情况补充后继续。
+        </p>
+        <div className="clarification-progress">
+          <span>
+            已填写 {answeredCount} / {clarification.questions.length}
+          </span>
+          <span className="muted">未填写的项会交给 Codex 继续推断</span>
+        </div>
+        <div className="clarification-dialog-body">
+          {clarification.questions.map(renderQuestion)}
+        </div>
+        <ErrorNotice message={error} />
+        <div className="form-actions">
+          <button
+            className="btn-primary"
+            type="button"
+            disabled={busy}
+            onClick={() => submit(false)}
+          >
+            {busy ? "提交中..." : "提交并继续分析（空项按跳过）"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => submit(true)}
+          >
+            {busy ? "提交中..." : "暂时跳过，让 Codex 继续推断"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -535,36 +571,67 @@ function DiffBlock({ value }: { value: string }) {
   );
 }
 
-function splitUnifiedDiffByFile(value: string) {
-  const sections: Array<{ path: string; lines: string[] }> = [];
-  let current: { path: string; lines: string[] } | null = null;
+function pathFromDiffPathSpec(spec: string, side: "a" | "b"): string | null {
+  const decoded = decodeGitPath(spec);
+  const prefix = `${side}/`;
+  return decoded.startsWith(prefix) ? decoded.slice(prefix.length) : null;
+}
+
+// Extracts the `b/` side path from a `diff --git` header. This is a best-effort
+// fallback for sections without `---`/`+++` markers (for example binary diffs).
+// Normal text sections use the unambiguous `+++ b/` marker below. Note that an
+// unquoted path containing the literal substring ` b/` cannot be disambiguated
+// from this header alone; such binary files may fall back to the "no diff
+// content" message in the viewer.
+function bPathFromDiffHeader(line: string): string | null {
+  const rest = line.slice("diff --git ".length);
+  const unquoted = rest.lastIndexOf(" b/");
+  if (unquoted >= 0) return pathFromDiffPathSpec(rest.slice(unquoted + 1), "b");
+  const quoted = rest.lastIndexOf(' "b/');
+  if (quoted >= 0) return pathFromDiffPathSpec(rest.slice(quoted + 1), "b");
+  return null;
+}
+
+export function splitUnifiedDiffByFile(value: string) {
+  const sections: Array<{ path: string | null; lines: string[] }> = [];
+  let current: { path: string | null; lines: string[] } | null = null;
 
   for (const line of value.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      const match = line.match(/ b\/(.+)$/);
-      const path = match?.[1] ?? line;
+      const path = bPathFromDiffHeader(line);
       current = { path, lines: [] };
       sections.push(current);
       continue;
     }
-    if (!current && (line.startsWith("+++ b/") || line.startsWith("--- a/"))) {
-      const path =
-        line.startsWith("+++ b/")
-          ? line.slice("+++ b/".length)
-          : line.slice("--- a/".length);
-      current = { path, lines: [] };
-      sections.push(current);
+    if (!current) {
       continue;
     }
-    if (current) {
-      current.lines.push(line);
+
+    if (line.startsWith("+++ b/") || line.startsWith('+++ "b/')) {
+      const path = pathFromDiffPathSpec(line.slice("+++ ".length), "b");
+      if (path !== null) {
+        current.path = path;
+      }
+    } else if (line.startsWith("--- a/") || line.startsWith('--- "a/')) {
+      if (current.path === null) {
+        const path = pathFromDiffPathSpec(line.slice("--- ".length), "a");
+        if (path !== null) {
+          current.path = path;
+        }
+      }
     }
+
+    current.lines.push(line);
   }
 
-  if (sections.length === 0 && value.trim()) {
+  const resolved = sections
+    .filter((section) => section.path !== null)
+    .map((section) => ({ path: section.path as string, lines: section.lines }));
+
+  if (resolved.length === 0 && value.trim()) {
     return [{ path: "unified diff", lines: value.split("\n") }];
   }
-  return sections;
+  return resolved;
 }
 
 function riskTone(level?: string): BadgeTone {
@@ -1849,10 +1916,12 @@ export function NewTaskPage() {
 export function TaskDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { state, loading, error, refresh } = useWorkflowState(id);
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [actionError, setActionError] = useState("");
+  const [clarificationOpen, setClarificationOpen] = useState(false);
   const { connected, reconnecting, events } = useHarnessEvents(id);
   const { ask, confirmDialog } = useConfirmDialog();
 
@@ -1862,6 +1931,12 @@ export function TaskDetailPage() {
       void refresh();
     }
   }, [latestEvent, refresh]);
+
+  useEffect(() => {
+    if (location.hash === "#clarification" && state?.attention.clarification) {
+      setClarificationOpen(true);
+    }
+  }, [location.hash, state?.attention.clarification]);
 
   async function run(
     action: () => Promise<unknown>,
@@ -2048,11 +2123,17 @@ export function TaskDetailPage() {
         </div>
       </div>
 
-      {state?.attention.clarification ? (
+      {clarificationOpen && state?.attention.clarification ? (
         <ClarificationPanel
           clarification={state.attention.clarification}
           onAnswered={() => {
+            setClarificationOpen(false);
+            navigate(`/tasks/${id}`, { replace: true });
             refresh();
+          }}
+          onClose={() => {
+            setClarificationOpen(false);
+            navigate(`/tasks/${id}`, { replace: true });
           }}
         />
       ) : null}
@@ -2570,39 +2651,129 @@ export function ApprovalsPage() {
   );
 }
 
+function DiffViewer({ diff }: { diff: DiffResult }) {
+  const sections = useMemo(
+    () => splitUnifiedDiffByFile(diff.unifiedDiff),
+    [diff.unifiedDiff],
+  );
+  // Selection is a file from `diff.files` (never a section path), so a file
+  // that has no matching diff section still stays highlighted and shows a
+  // clear message instead of silently jumping away.
+  const [selected, setSelected] = useState<string | null>(
+    () => diff.files[0]?.path ?? null,
+  );
+
+  useEffect(() => {
+    if (diff.files.length === 0) {
+      if (selected !== null) {
+        setSelected(null);
+      }
+      return;
+    }
+
+    const stillValid =
+      selected !== null &&
+      diff.files.some((file) => file.path === selected);
+    if (!stillValid) {
+      setSelected(diff.files[0].path);
+    }
+  }, [diff.files, selected]);
+
+  const current =
+    sections.find((section) => section.path === selected) ??
+    (sections.length === 1 && sections[0].path === "unified diff"
+      ? sections[0]
+      : null);
+  const noDiff = diff.files.length === 0;
+
+  return (
+    <div className="diff-layout">
+      <div className="diff-file-tree" role="navigation" aria-label="改动文件">
+        {diff.files.length === 0 ? (
+          <p className="muted">无文件改动</p>
+        ) : (
+          <ul className="diff-file-list">
+            {diff.files.map((file) => (
+              <li key={file.path}>
+                <button
+                  type="button"
+                  className={`diff-file-item${selected === file.path ? " active" : ""}`}
+                  aria-current={selected === file.path ? "true" : undefined}
+                  onClick={() => setSelected(file.path)}
+                >
+                  <Badge tone={fileTone(file.status)}>
+                    {fileStatusLabel(file.status)}
+                  </Badge>
+                  <span className="mono">{file.path}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <label className="field diff-file-select">
+        选择文件
+        <select
+          value={selected ?? ""}
+          onChange={(event) => setSelected(event.target.value)}
+        >
+          {diff.files.map((file) => (
+            <option key={file.path} value={file.path}>
+              {file.path}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <div className="diff-pane">
+        {current ? (
+          <>
+            <div className="card-head diff-pane-head">
+              <h3>{current.path === "unified diff" ? "代码差异" : current.path}</h3>
+              <Badge tone="neutral">{diff.files.length} 个文件</Badge>
+            </div>
+            <DiffBlock value={current.lines.join("\n")} />
+          </>
+        ) : (
+          <p className="muted">
+            {noDiff
+              ? "暂无代码差异"
+              : "该文件暂无代码差异内容（可能改动已暂存，未包含在本次差异中）。"}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function DiffPage() {
   const { id } = useParams();
   const location = useLocation();
   const { state, loading, error, refresh } = useWorkflowState(id);
   const diff = state?.diff ?? null;
   const validations = state?.validations ?? [];
-  const [showFiles, setShowFiles] = useState(false);
-  const [showDiff, setShowDiff] = useState(false);
-  const [selectedDiffFile, setSelectedDiffFile] = useState<string | null>(null);
   const [openOutput, setOpenOutput] = useState<string | null>(null);
   const [validateBusy, setValidateBusy] = useState(false);
   const [continueBusy, setContinueBusy] = useState(false);
   const [continueMessage, setContinueMessage] = useState("");
   const [actionError, setActionError] = useState("");
 
-  useEffect(() => {
-    if (location.hash !== "#validation-action") return;
-    const timer = setTimeout(() => {
-      document
-        .getElementById("validation-action")
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
-    return () => clearTimeout(timer);
-  }, [location.hash]);
+  const validationActionRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node || location.hash !== "#validation-action") {
+        return;
+      }
+      requestAnimationFrame(() => {
+        node.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    },
+    [location.hash],
+  );
 
   const latestValidations = useMemo(
     () => latestValidationOutcomes(validations),
     [validations],
-  );
-
-  const diffSections = useMemo(
-    () => splitUnifiedDiffByFile(diff?.unifiedDiff ?? ""),
-    [diff?.unifiedDiff],
   );
 
   async function validate() {
@@ -2674,38 +2845,6 @@ export function DiffPage() {
             />
             <Fact label="删除" value={`${diff.stats.deleted} 个文件`} />
           </div>
-          <div className="divider" />
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setShowFiles((current) => !current)}
-          >
-            {showFiles ? "收起具体文件" : "查看具体文件"}
-          </button>
-          {showFiles ? (
-            <ul className="file-list">
-              {diff.files.map((file) => (
-                <li key={file.path} className="file-item">
-                  <Badge tone={fileTone(file.status)}>
-                    {fileStatusLabel(file.status)}
-                  </Badge>
-                  <button
-                    type="button"
-                    className="file-link"
-                    onClick={() => {
-                      setShowDiff(true);
-                      setSelectedDiffFile(file.path);
-                      document
-                        .getElementById(`diff-${encodeURIComponent(file.path)}`)
-                        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }}
-                  >
-                    <span className="mono">{file.path}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : null}
         </div>
       )}
 
@@ -2759,7 +2898,11 @@ export function DiffPage() {
       {latestValidations.some(
         (item) => item.status === "failed" || item.status === "timeout",
       ) ? (
-        <div className="card" id="validation-action">
+        <div
+          className="card"
+          id="validation-action"
+          ref={validationActionRef}
+        >
           <div className="card-head">
             <h2>检查未通过</h2>
           </div>
@@ -2801,43 +2944,14 @@ export function DiffPage() {
         </div>
       ) : null}
 
-      <div className="card">
-        <div className="card-head">
-          <h2>代码差异（技术细节）</h2>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setShowDiff((current) => !current)}
-          >
-            {showDiff ? "收起代码差异" : "查看代码差异"}
-          </button>
+      {diff && (
+        <div className="card">
+          <div className="card-head">
+            <h2>代码差异</h2>
+          </div>
+          <DiffViewer diff={diff} />
         </div>
-        {showDiff ? (
-          diffSections.length ? (
-            <div className="diff-sections">
-              {diffSections.map((section) => (
-                <div
-                  className="diff-section"
-                  id={`diff-${encodeURIComponent(section.path)}`}
-                  key={section.path}
-                >
-                  <div className="card-head">
-                    <h3>{section.path}</h3>
-                    {selectedDiffFile === section.path ? (
-                      <Badge tone="active">当前定位</Badge>
-                    ) : null}
-                  </div>
-                  <DiffBlock value={section.lines.join("\n")} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="muted">暂无代码差异</p>
-          )
-        ) : (
-          <p className="muted">代码差异已收起，可点击上方查看。</p>
-        )}
-      </div>
+      )}
     </TaskShell>
   );
 }

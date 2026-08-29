@@ -393,6 +393,18 @@ p {
   word-break: break-word;
 }
 
+.clarification-dialog {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 2 * var(--space-5));
+  overflow: auto;
+}
+
+.clarification-dialog-body {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
 /* ------------------------------------------------------------------ */
 /* Cards                                                              */
 /* ------------------------------------------------------------------ */
@@ -538,47 +550,6 @@ p {
   color: var(--accent);
   background: var(--accent-soft);
   border-color: var(--accent);
-}
-
-.file-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.file-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.file-item .mono {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-link {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent);
-  font-size: inherit;
-  min-height: 28px;
-  cursor: pointer;
-  text-align: left;
-}
-
-.file-link:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 .event-list {
@@ -1156,16 +1127,82 @@ select {
   color: var(--diff-meta);
 }
 
-.diff-sections {
+.diff-layout {
   display: grid;
-  gap: var(--space-5);
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
 }
 
-.diff-section {
+.diff-file-tree {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  padding-right: var(--space-2);
+}
+
+.diff-file-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.diff-file-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.diff-file-item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.diff-file-item.active,
+.diff-file-item.active:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.diff-file-item .badge {
+  flex: none;
+}
+
+.diff-file-item .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
 }
 
-.diff-section h3 {
+.diff-file-select {
+  display: none;
+}
+
+.diff-pane {
+  min-width: 0;
+}
+
+.diff-pane .diff {
+  margin: 0;
+}
+
+.diff-pane-head h3 {
   margin-bottom: var(--space-2);
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -1224,26 +1261,10 @@ select {
   font-weight: 700;
 }
 
-.workflow-step-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
 .workflow-step-label {
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
-}
-
-.workflow-step-hint {
-  color: var(--text-3);
-  font-size: 11px;
-  line-height: 1.4;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 .workflow-step.is-current .workflow-step-dot {
@@ -1397,6 +1418,86 @@ select {
   border-radius: var(--radius-m);
   color: var(--text-2);
   font-size: 13px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Task rail (section navigation)                                     */
+/* ------------------------------------------------------------------ */
+
+.task-layout {
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+
+.task-rail {
+  position: sticky;
+  top: 76px;
+  display: grid;
+  gap: 2px;
+}
+
+.rail-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: var(--space-2);
+}
+
+.task-rail-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 7px 12px;
+  border-radius: var(--radius-s);
+  border-left: 2px solid transparent;
+  color: var(--text-2);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.task-rail-link:hover {
+  color: var(--text);
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.task-rail-link.active {
+  color: var(--text);
+  background: var(--surface);
+  border-left-color: var(--accent);
+}
+
+.task-rail-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-count {
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--warning);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  flex: none;
+}
+
+.task-body {
+  min-width: 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1573,9 +1674,76 @@ select {
   gap: var(--space-5);
 }
 
-.conversation-page > .page-context,
-.conversation-page > .page-header {
+.conversation-body > .page-context,
+.conversation-body > .page-header {
   margin-bottom: 0;
+}
+
+.conversation-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.conversation-rail {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow: auto;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.conversation-rail-list {
+  display: grid;
+  gap: 2px;
+}
+
+.conversation-rail-item {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  color: var(--text-2);
+}
+
+.conversation-rail-item:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.conversation-rail-item.active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.conversation-rail-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
 }
 
 .conversation-page .conversation-card,
@@ -1914,6 +2082,32 @@ select {
   gap: var(--space-4);
 }
 
+.conversation-turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.turn-details {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-m);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+}
+
+.turn-details summary {
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.turn-details-body {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
 .conversation-message {
   padding: var(--space-4);
   border-radius: var(--radius-m);
@@ -2226,8 +2420,70 @@ select {
     padding: var(--space-1) 0;
   }
 
-  .workflow-step-copy {
-    padding-top: 2px;
+  .task-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .task-rail {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .task-rail .rail-label {
+    display: none;
+  }
+
+  .task-rail-link {
+    border-left: 0;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .task-rail-link.active {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+  }
+
+  .diff-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .diff-file-tree {
+    display: none;
+  }
+
+  .diff-file-select {
+    display: grid;
+  }
+
+  .conversation-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-rail {
+    position: static;
+    max-height: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .conversation-rail .rail-head {
+    width: 100%;
+  }
+
+  .conversation-rail-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .conversation-rail-item {
+    border: 1px solid var(--border);
+    background: var(--surface);
   }
 }
 

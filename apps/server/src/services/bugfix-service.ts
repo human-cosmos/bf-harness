@@ -674,11 +674,24 @@ export class BugfixService {
       throw new Error("Project not found");
     }
 
+    const existing = this.worktrees.getByTaskId(taskId);
+    if (existing && existsSync(existing.path)) {
+      if (existing.status !== "READY") {
+        this.worktrees.updateStatus(existing.id, "READY");
+      }
+      return this.worktrees.getByTaskId(taskId)!;
+    }
+
     const result = await this.worktreeManager.create({
       taskId: task.id,
       repoPath: project.repoPath,
       root: this.worktreeRoot,
     });
+
+    if (existing) {
+      this.worktrees.updateStatus(existing.id, "READY");
+      return this.worktrees.getByTaskId(taskId)!;
+    }
 
     const worktree = this.worktrees.create({
       taskId: task.id,

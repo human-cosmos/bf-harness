@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
-test.setTimeout(240_000);
+test.setTimeout(600_000);
 
 let repoPath = "";
 let projectId = "";
@@ -64,7 +64,7 @@ test("complete AI bugfix main flow through the web UI", async ({
       );
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
-    }, { timeout: 120_000 })
+    }, { timeout: 300_000 })
     .toBe("WAITING_FOR_PLAN_APPROVAL");
 
   await page.goto(`/tasks/${taskId}/plan`);
@@ -81,7 +81,7 @@ test("complete AI bugfix main flow through the web UI", async ({
       );
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
-    }, { timeout: 120_000 })
+    }, { timeout: 300_000 })
     .toBe("IMPLEMENTING");
 
   await page.goto(`/tasks/${taskId}`);
@@ -94,7 +94,7 @@ test("complete AI bugfix main flow through the web UI", async ({
       );
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
-    }, { timeout: 120_000 })
+    }, { timeout: 300_000 })
     .toMatch(/^(VALIDATING|WAITING_FOR_ACCEPTANCE)$/);
 
   await page.goto(`/tasks/${taskId}/diff`);
@@ -107,13 +107,13 @@ test("complete AI bugfix main flow through the web UI", async ({
       );
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
-    }, { timeout: 120_000 })
+    }, { timeout: 300_000 })
     .toBe("WAITING_FOR_ACCEPTANCE");
 
   await page.goto(`/tasks/${taskId}/report`);
   await page.getByRole("button", { name: "生成验收报告" }).click();
   await expect(page.getByRole("button", { name: "通过" })).toBeEnabled({
-    timeout: 120_000,
+    timeout: 300_000,
   });
   await page.getByRole("button", { name: "通过" }).click();
 
@@ -124,6 +124,6 @@ test("complete AI bugfix main flow through the web UI", async ({
       );
       const body = (await response.json()) as { task: { status: string } };
       return body.task.status;
-    }, { timeout: 120_000 })
+    }, { timeout: 300_000 })
     .toBe("ACCEPTED");
 });

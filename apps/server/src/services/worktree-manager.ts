@@ -51,6 +51,17 @@ export class GitWorktreeManager {
     }
 
     try {
+      await execFileAsync("git", ["-C", input.repoPath, "worktree", "prune"]);
+      if (await this.branchExists(input.repoPath, branch)) {
+        await execFileAsync("git", [
+          "-C",
+          input.repoPath,
+          "worktree",
+          "add",
+          path,
+          branch,
+        ]);
+      } else {
       await execFileAsync("git", [
         "-C",
         input.repoPath,
@@ -61,6 +72,7 @@ export class GitWorktreeManager {
         path,
         baseCommit,
       ]);
+      }
     } catch (error) {
       await this.cleanupIncomplete(input.repoPath, path);
       throw new Error(
@@ -69,6 +81,25 @@ export class GitWorktreeManager {
     }
 
     return { path, baseCommit, branch };
+  }
+
+  private async branchExists(
+    repoPath: string,
+    branch: string,
+  ): Promise<boolean> {
+    try {
+      await execFileAsync("git", [
+        "-C",
+        repoPath,
+        "show-ref",
+        "--verify",
+        "--quiet",
+        `refs/heads/${branch}`,
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async cleanupIncomplete(repoPath: string, path: string): Promise<void> {

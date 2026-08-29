@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
@@ -604,16 +605,16 @@ export function QuickCommandPalette({
   );
 }
 
-export function ConversationListPage() {
-  const { id: projectId } = useParams();
-  const navigate = useNavigate();
+function useConversations(projectId?: string) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function load() {
-    if (!projectId) return;
-    setLoading(true);
+  const refresh = useCallback(async () => {
+    if (!projectId) {
+      setLoading(false);
+      return;
+    }
     try {
       setConversations(await api.listConversations(projectId));
       setError("");
@@ -622,19 +623,86 @@ export function ConversationListPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    void load();
   }, [projectId]);
 
-  async function createConversation() {
-    if (!projectId) return;
+  useEffect(() => {
+    setLoading(true);
+    void refresh();
+  }, [refresh]);
+
+  async function create(): Promise<Conversation | null> {
+    if (!projectId) return null;
     try {
       const conversation = await api.createConversation(projectId, { title: "" });
-      navigate(`/projects/${projectId}/chat/${conversation.id}`);
+      await refresh();
+      return conversation;
     } catch (err) {
       setError((err as Error).message);
+      return null;
+    }
+  }
+
+  return { conversations, loading, error, refresh, create };
+}
+
+function ConversationRail({
+  projectId,
+  conversations,
+  loading,
+  error,
+  activeId,
+  onCreate,
+}: {
+  projectId: string;
+  conversations: Conversation[];
+  loading: boolean;
+  error: string;
+  activeId?: string;
+  onCreate: () => void;
+}) {
+  return (
+    <nav className="conversation-rail" aria-label="对话列表">
+      <div className="rail-head">
+        <span className="rail-label">对话</span>
+        <button type="button" className="btn" onClick={onCreate}>
+          新建
+        </button>
+      </div>
+      {loading ? (
+        <p className="muted">加载对话中...</p>
+      ) : error ? (
+        <p className="muted">对话列表加载失败：{error}</p>
+      ) : conversations.length === 0 ? (
+        <p className="muted">还没有对话</p>
+      ) : (
+        <div className="conversation-rail-list">
+          {conversations.map((conversation) => (
+            <Link
+              key={conversation.id}
+              to={`/projects/${projectId}/chat/${conversation.id}`}
+              className={`conversation-rail-item${conversation.id === activeId ? " active" : ""}`}
+            >
+              <span className="conversation-rail-title">
+                {conversationDisplayTitle(conversation.title)}
+              </span>
+              <span className="muted mono">{conversation.status}</span>
+            </Link>
+          ))}
+        </div>
+      )}
+    </nav>
+  );
+}
+
+export function ConversationListPage() {
+  const { id: projectId } = useParams();
+  const navigate = useNavigate();
+  const { conversations, loading, error, create } = useConversations(projectId);
+
+  async function createConversation() {
+    const conversation = await create();
+    if (conversation) {
+      navigate(`/projects/${projectId}/chat/${conversation.id}`);
     }
   }
 
@@ -707,6 +775,20 @@ export function ConversationPage() {
   const [renameValue, setRenameValue] = useState("");
 
   const websocket = useConversationEvents(conversationId);
+  const {
+    conversations,
+    loading: conversationsLoading,
+    error: conversationsError,
+    refresh: refreshList,
+    create,
+  } = useConversations(projectId);
+
+  async function createAndOpen() {
+    const next = await create();
+    if (next) {
+      navigate(`/projects/${projectId}/chat/${next.id}`);
+    }
+  }
 
   async function load(shouldSync = false) {
     if (!conversationId) return;
@@ -743,9 +825,12 @@ export function ConversationPage() {
 
   useEffect(() => {
     if (!conversationId) return;
-    const timer = setInterval(() => void load(false), 2500);
+    const timer = setInterval(() => {
+      void load(false);
+      void refreshList();
+    }, 2500);
     return () => clearInterval(timer);
-  }, [conversationId]);
+  }, [conversationId, refreshList]);
 
   useEffect(() => {
     if (websocket.events.length > 0) {
@@ -922,11 +1007,16 @@ export function ConversationPage() {
 
   return (
     <section className="conversation-page">
-      <div className="page-context">
-        <Link to={`/projects/${projectId}/chat`} className="btn back-link">
-          返回对话列表
-        </Link>
-      </div>
+      <div className="conversation-layout">
+        <ConversationRail
+          projectId={projectId!}
+          conversations={conversations}
+          loading={conversationsLoading}
+          error={conversationsError}
+          activeId={conversationId}
+          onCreate={createAndOpen}
+        />
+        <div className="conversation-body">
       <div className="page-header conversation-page-header">
         <div className="conversation-heading">
           <p className="page-kicker">项目对话</p>
@@ -1072,7 +1162,7 @@ export function ConversationPage() {
         />
       ))}
 
-      <MessageTimeline items={items} />
+      <MessageTimeline key={conversationId} items={items} />
 
       {showActivity ? <ActivityInspector events={events} /> : null}
 
@@ -1144,14 +1234,89 @@ export function ConversationPage() {
           </div>
         </div>
       </div>
+        </div>
+      </div>
     </section>
   );
 }
 
-export function MessageTimeline({ items }: { items: ConversationItem[] }) {
-  const visibleItems = useMemo(() => dedupeTimelineItems(items), [items]);
+interface TimelineGroup {
+  key: string;
+  user: ConversationItem | null;
+  items: ConversationItem[];
+}
 
-  if (visibleItems.length === 0) {
+const COLLAPSED_TURN_ITEM_TYPES = new Set([
+  "reasoning",
+  "plan",
+  "commandExecution",
+  "fileChange",
+  "mcpToolCall",
+  "tokenUsage",
+  "approval",
+  "clarification",
+  "contextCompaction",
+  "webSearch",
+  "imageGeneration",
+]);
+
+function groupTimelineItems(items: ConversationItem[]): TimelineGroup[] {
+  const groups: TimelineGroup[] = [];
+  let current: TimelineGroup | null = null;
+
+  for (const item of items) {
+    if (item.itemType === "userMessage") {
+      current = { key: item.id, user: item, items: [] };
+      groups.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { key: item.id, user: null, items: [item] };
+      groups.push(current);
+      continue;
+    }
+    current.items.push(item);
+  }
+
+  return groups;
+}
+
+function ConversationTurnGroup({ group }: { group: TimelineGroup }) {
+  const primary = group.items.filter(
+    (item) => !COLLAPSED_TURN_ITEM_TYPES.has(item.itemType),
+  );
+  const auxiliary = group.items.filter((item) =>
+    COLLAPSED_TURN_ITEM_TYPES.has(item.itemType),
+  );
+
+  return (
+    <div className="conversation-turn">
+      {group.user ? <ConversationItemBlock item={group.user} /> : null}
+      {primary.map((item) => (
+        <ConversationItemBlock key={item.id} item={item} />
+      ))}
+      {auxiliary.length > 0 ? (
+        <details className="turn-details">
+          <summary>本轮详情（{auxiliary.length} 项）</summary>
+          <div className="turn-details-body">
+            {auxiliary.map((item) => (
+              <ConversationItemBlock key={item.id} item={item} />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+export function MessageTimeline({ items }: { items: ConversationItem[] }) {
+  const [visibleGroupCount, setVisibleGroupCount] = useState(10);
+  const groups = useMemo(
+    () => groupTimelineItems(dedupeTimelineItems(items)),
+    [items],
+  );
+
+  if (groups.length === 0) {
     return (
       <div className="card empty-state">
         <h2>开始对话</h2>
@@ -1160,10 +1325,24 @@ export function MessageTimeline({ items }: { items: ConversationItem[] }) {
     );
   }
 
+  const shownGroups = groups.slice(
+    Math.max(0, groups.length - visibleGroupCount),
+  );
+  const hasMore = shownGroups.length < groups.length;
+
   return (
     <div className="conversation-timeline">
-      {visibleItems.map((item) => (
-        <ConversationItemBlock key={item.id} item={item} />
+      {hasMore ? (
+        <button
+          type="button"
+          className="btn"
+          onClick={() => setVisibleGroupCount((current) => current + 10)}
+        >
+          加载更早消息
+        </button>
+      ) : null}
+      {shownGroups.map((group) => (
+        <ConversationTurnGroup key={group.key} group={group} />
       ))}
     </div>
   );

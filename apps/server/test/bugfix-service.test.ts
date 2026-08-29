@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -129,5 +130,92 @@ describe("BugfixService", () => {
     expect(() => service.startValidationJob("task-1")).toThrow(
       /validate job is already running/,
     );
+  });
+
+  it("returns the existing worktree when prepareWorktree is called again", async () => {
+    const { db, service, worktreeRoot } = createService();
+    const repo = mkdtempSync(join(tmpdir(), "bugfix-service-repo-"));
+    try {
+      execFileSync("git", ["init", repo]);
+      execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+      execFileSync("git", ["-C", repo, "config", "user.name", "Test"]);
+      writeFileSync(join(repo, "README.md"), "# test\n");
+      execFileSync("git", ["-C", repo, "add", "README.md"]);
+      execFileSync("git", ["-C", repo, "commit", "-m", "baseline"]);
+
+      const project = await service.createProject({
+        name: "idempotent",
+        repoPath: repo,
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [repo],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+
+      const first = await service.prepareWorktree(task.id);
+      const second = await service.prepareWorktree(task.id);
+
+      expect(first.id).toBe(second.id);
+      expect(second.status).toBe("READY");
+      expect(service.worktrees.getByTaskId(task.id)?.status).toBe("READY");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("recreates the worktree when the directory is missing but the branch remains", async () => {
+    const { db, service, worktreeRoot } = createService();
+    const repo = mkdtempSync(join(tmpdir(), "bugfix-service-repo-"));
+    try {
+      execFileSync("git", ["init", repo]);
+      execFileSync("git", ["-C", repo, "config", "user.email", "t@example.com"]);
+      execFileSync("git", ["-C", repo, "config", "user.name", "Test"]);
+      writeFileSync(join(repo, "README.md"), "# test\n");
+      execFileSync("git", ["-C", repo, "add", "README.md"]);
+      execFileSync("git", ["-C", repo, "commit", "-m", "baseline"]);
+
+      const project = await service.createProject({
+        name: "recreate",
+        repoPath: repo,
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [repo],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+
+      const first = await service.prepareWorktree(task.id);
+      rmSync(first.path, { recursive: true, force: true });
+      const second = await service.prepareWorktree(task.id);
+
+      expect(second.id).toBe(first.id);
+      expect(second.status).toBe("READY");
+      expect(service.worktrees.getByTaskId(task.id)?.path).toBe(first.path);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
   });
 });

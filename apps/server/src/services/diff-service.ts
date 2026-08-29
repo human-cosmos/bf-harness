@@ -34,7 +34,39 @@ function statusFromPorcelain(code: string): FileChange["status"] {
   if (code.includes("R")) {
     return "renamed";
   }
+  if (code.includes("C")) {
+    return "added";
+  }
   return "modified";
+}
+
+function parsePorcelainStatus(output: string): FileChange[] {
+  const entries = output.split("\0");
+  const files: FileChange[] = [];
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!entry) {
+      continue;
+    }
+
+    const code = entry.slice(0, 2);
+    const path = entry.slice(3);
+    const status = statusFromPorcelain(code);
+
+    if (code.includes("R") || code.includes("C")) {
+      // `--porcelain=v1 -z` emits the destination path first, followed by the
+      // source path as a separate NUL-terminated record.
+      const destination = path;
+      index += 1;
+      files.push({ path: destination, status });
+      continue;
+    }
+
+    files.push({ path, status });
+  }
+
+  return files;
 }
 
 async function runGit(args: string[], allowFailure = false): Promise<string> {
@@ -57,22 +89,18 @@ export class DiffService {
       worktreePath,
       "status",
       "--porcelain=v1",
+      "-z",
+      "-uall",
     ]);
 
-    const files: FileChange[] = status
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const [code, rawPath] = [line.slice(0, 2), line.slice(3).trim()];
-        return { path: rawPath, status: statusFromPorcelain(code) };
-      });
+    const files: FileChange[] = parsePorcelainStatus(status);
 
     const diffs: string[] = [];
     const trackedDiff = await runGit([
       "-C",
       worktreePath,
       "diff",
+      "HEAD",
       "--",
     ]);
     if (trackedDiff.trim()) {
