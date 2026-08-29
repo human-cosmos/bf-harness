@@ -1730,3 +1730,37 @@ select {
   cursor: pointer;
   font-weight: 650;
 }
+
+.quick-command-palette {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.quick-command-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px var(--space-2);
+}
+
+.quick-command-palette button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  text-align: left;
+}
+
+.conversation-rename {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.conversation-rename input {
+  flex: 1;
+}

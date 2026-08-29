@@ -440,6 +440,54 @@ function FileMentionPicker({
   );
 }
 
+export function QuickCommandPalette({
+  onRun,
+  onClose,
+}: {
+  onRun: (command: string) => void;
+  onClose: () => void;
+}) {
+  const commands = [
+    { command: "/model", description: "查看可用模型" },
+    { command: "/policy", description: "打开策略面板" },
+    { command: "/compact", description: "压缩上下文" },
+    { command: "/fork", description: "Fork 当前对话" },
+    { command: "/interrupt", description: "中断当前 turn" },
+    { command: "/rename", description: "重命名对话" },
+    { command: "/help", description: "显示快捷指令说明" },
+  ];
+
+  return (
+    <div
+      className="quick-command-palette"
+      role="menu"
+      aria-label="快捷指令"
+      onMouseDown={(event) => event.preventDefault()}
+    >
+      <div className="quick-command-head">
+        <strong>快捷指令</strong>
+        <button type="button" aria-label="关闭" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      {commands.map((item) => (
+        <button
+          key={item.command}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            onRun(item.command);
+            onClose();
+          }}
+        >
+          <span className="mono">{item.command}</span>
+          <span className="muted">{item.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ConversationListPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -538,6 +586,9 @@ export function ConversationPage() {
   const [showPolicy, setShowPolicy] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
   const [showFilePicker, setShowFilePicker] = useState(false);
+  const [showCommands, setShowCommands] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
 
   const websocket = useConversationEvents(conversationId);
 
@@ -677,6 +728,66 @@ export function ConversationPage() {
     }
   }
 
+  async function renameConversation() {
+    if (!conversationId || !renameValue.trim()) return;
+    setBusy(true);
+    try {
+      const updated = await api.renameConversation(
+        conversationId,
+        renameValue.trim(),
+      );
+      setConversation(updated);
+      setRenameValue("");
+      setRenaming(false);
+      setMessage("对话标题已更新");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runQuickCommand(command: string) {
+    if (command === "/policy") {
+      setShowPolicy(true);
+      return;
+    }
+    if (command === "/compact") {
+      await compact();
+      return;
+    }
+    if (command === "/fork") {
+      await fork();
+      return;
+    }
+    if (command === "/interrupt") {
+      await interrupt();
+      return;
+    }
+    if (command === "/model") {
+      setBusy(true);
+      try {
+        const models = await api.listConversationModels(conversationId!);
+        setMessage(`可用模型: ${JSON.stringify(models)}`);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    if (command === "/rename") {
+      setRenaming(true);
+      setRenameValue(conversation?.title ?? "");
+      return;
+    }
+    if (command === "/help") {
+      setMessage(
+        "/model 查看模型 · /policy 策略 · /compact 压缩 · /fork Fork · /interrupt 中断 · /rename 重命名",
+      );
+    }
+  }
+
   if (!conversation) {
     return (
       <section>
@@ -722,7 +833,31 @@ export function ConversationPage() {
         <button type="button" onClick={() => setShowActivity((current) => !current)}>
           日志
         </button>
+        <button type="button" onClick={() => setShowCommands((current) => !current)}>
+          快捷指令
+        </button>
       </div>
+
+      {showCommands ? (
+        <QuickCommandPalette
+          onRun={runQuickCommand}
+          onClose={() => setShowCommands(false)}
+        />
+      ) : null}
+
+      {renaming ? (
+        <div className="conversation-rename">
+          <input
+            aria-label="对话标题"
+            value={renameValue}
+            onChange={(event) => setRenameValue(event.target.value)}
+            placeholder="输入新标题"
+          />
+          <button type="button" className="btn-primary" onClick={renameConversation}>
+            保存标题
+          </button>
+        </div>
+      ) : null}
 
       {showPolicy ? (
         <Card title="对话策略">

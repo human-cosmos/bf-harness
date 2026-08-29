@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import {
   MessageTimeline,
+  QuickCommandPalette,
 } from "./conversation-pages.js";
 import type { ConversationItem } from "./api.js";
 
@@ -75,5 +76,18 @@ describe("MessageTimeline", () => {
 
     expect(screen.getByText("pnpm test")).toBeTruthy();
     expect(screen.getByText("文件变更")).toBeTruthy();
+  });
+
+  it("renders and invokes quick commands", () => {
+    const commands: string[] = [];
+    render(
+      <QuickCommandPalette
+        onRun={(command) => commands.push(command)}
+        onClose={() => {}}
+      />,
+    );
+    const model = screen.getByText("/model");
+    model.click();
+    expect(commands).toContain("/model");
   });
 });
