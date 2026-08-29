@@ -224,6 +224,112 @@ export function migrate(db: AppDatabase): void {
         WHERE validation_run_id IS NULL;
       `,
     },
+    {
+      version: 5,
+      sql: `
+        CREATE TABLE conversations (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id),
+          title TEXT NOT NULL,
+          codex_thread_id TEXT,
+          status TEXT NOT NULL,
+          sandbox_mode TEXT NOT NULL,
+          network_access INTEGER NOT NULL,
+          approval_policy TEXT NOT NULL,
+          approvals_reviewer TEXT NOT NULL,
+          allow_git_writes INTEGER NOT NULL,
+          model TEXT,
+          reasoning_effort TEXT,
+          base_instructions TEXT,
+          developer_instructions TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE conversation_turns (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id),
+          codex_turn_id TEXT NOT NULL,
+          status TEXT NOT NULL,
+          model TEXT,
+          effort TEXT,
+          error_json TEXT,
+          started_at_ms INTEGER,
+          completed_at_ms INTEGER,
+          duration_ms INTEGER,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE conversation_items (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id),
+          codex_turn_id TEXT,
+          codex_item_id TEXT,
+          parent_item_id TEXT,
+          item_type TEXT NOT NULL,
+          role TEXT,
+          author TEXT,
+          title TEXT,
+          status TEXT,
+          payload_json TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          created_at_ms INTEGER,
+          completed_at_ms INTEGER,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE conversation_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id),
+          codex_thread_id TEXT,
+          codex_turn_id TEXT,
+          codex_item_id TEXT,
+          method TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          dedupe_key TEXT,
+          seq INTEGER NOT NULL,
+          emitted_at_ms INTEGER,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE conversation_approvals (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id),
+          codex_turn_id TEXT,
+          codex_item_id TEXT,
+          codex_request_id INTEGER,
+          method TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          risk_level TEXT NOT NULL,
+          decision TEXT,
+          decided_at TEXT,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE conversation_clarifications (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id),
+          codex_request_id INTEGER,
+          codex_turn_id TEXT,
+          codex_item_id TEXT,
+          questions_json TEXT NOT NULL,
+          answers_json TEXT,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          answered_at TEXT
+        );
+
+        CREATE INDEX idx_conversations_project ON conversations(project_id);
+        CREATE INDEX idx_conversation_turns_conversation ON conversation_turns(conversation_id);
+        CREATE INDEX idx_conversation_items_conversation_seq ON conversation_items(conversation_id, seq);
+        CREATE INDEX idx_conversation_items_thread_turn ON conversation_items(codex_turn_id);
+        CREATE INDEX idx_conversation_events_conversation_seq ON conversation_events(conversation_id, seq);
+        CREATE INDEX idx_conversation_approvals_conversation ON conversation_approvals(conversation_id);
+        CREATE INDEX idx_conversation_clarifications_conversation ON conversation_clarifications(conversation_id);
+      `,
+    },
   ];
 
   for (const migration of migrations) {
