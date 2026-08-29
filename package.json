@@ -10,6 +10,7 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install chromium",
     "accept:e2e": "pnpm --filter @bugfix-harness/server accept:e2e",
+    "accept:conversation": "pnpm --filter @bugfix-harness/server accept:conversation",
     "accept:unit": "pnpm --filter @bugfix-harness/server accept:unit",
     "accept:crash": "pnpm --filter @bugfix-harness/server accept:crash",
     "dev:server": "pnpm --filter @bugfix-harness/server dev",

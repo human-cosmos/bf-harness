@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "accept:e2e": "tsx scripts/e2e-acceptance.ts",
+    "accept:conversation": "tsx scripts/conversation-e2e-acceptance.ts",
     "accept:unit": "vitest run test/acceptance.test.ts",
     "accept:crash": "tsx scripts/crash-recovery-smoke.ts"
   },
