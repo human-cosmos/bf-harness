@@ -230,8 +230,9 @@ p {
   border-radius: var(--radius-s);
   display: grid;
   place-items: center;
-  background: var(--text);
-  color: #fff;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
   flex: none;
 }
 

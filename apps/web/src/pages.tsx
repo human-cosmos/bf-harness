@@ -932,13 +932,29 @@ export function Layout() {
         <div className="topbar-inner">
           <Link to="/" className="brand" aria-label="bf-harness 首页">
             <span className="brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="15" height="15">
-                <rect x="2" y="6" width="20" height="4.6" rx="2.3" fill="var(--add)" />
-                <rect x="2" y="13.4" width="20" height="4.6" rx="2.3" fill="var(--del)" />
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
                 <path
-                  d="M8.5 8.3h2.4M7.3 7.1v2.4M8.5 15.7h2.4"
-                  stroke="#fff"
-                  strokeWidth="1.2"
+                  d="M5 7a2 2 0 0 1 2-2h8l4 4v8a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M12 5v14"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M8.5 9.7v4.6M6.2 12h4.6"
+                  stroke="var(--success)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M14.8 12h3.4"
+                  stroke="var(--danger)"
+                  strokeWidth="1.8"
                   strokeLinecap="round"
                 />
               </svg>
@@ -963,7 +979,7 @@ export function Layout() {
               to="/tasks/new"
               className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
             >
-              新建任务
+              任务
             </NavLink>
             <NavLink
               to="/settings"
