@@ -29,6 +29,7 @@ import {
   ClarificationCoordinator,
   type ClarificationAnswers,
 } from "./clarification-coordinator.js";
+import { ConversationService } from "./conversation-service.js";
 import {
   groupFailedValidationRuns,
   nextValidationAction,
@@ -95,6 +96,7 @@ export class BugfixService {
   readonly agent: AgentOrchestrator;
   readonly events: EventBus;
   readonly clarifications: ClarificationCoordinator;
+  readonly conversationService: ConversationService;
   private readonly worktreeRoot: string;
   private readonly codexBin: string;
   private readonly analysisTimeoutMs: number;
@@ -127,6 +129,12 @@ export class BugfixService {
       this.events,
     );
     this.clarifications = new ClarificationCoordinator(this.events);
+    this.conversationService = new ConversationService({
+      db: options.db,
+      projects: this.projects,
+      eventBus: this.events,
+      codexBin: this.codexBin,
+    });
     this.sessions = new AgentSessionRepository(options.db);
     this.agentEvents = new AgentEventRepository(options.db);
     this.agent = new AgentOrchestrator(

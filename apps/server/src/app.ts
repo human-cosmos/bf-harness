@@ -9,6 +9,7 @@ import {
 } from "@bugfix-harness/shared";
 import type { BugfixService } from "./services/bugfix-service.js";
 import { DiskMonitor } from "./services/disk-monitor.js";
+import { DynamicToolRegistry } from "./services/dynamic-tool-registry.js";
 
 function pickDirectory(): Promise<string | null> {
   return new Promise((resolve, reject) => {
@@ -162,7 +163,15 @@ export async function buildApp(service: BugfixService) {
   app.get("/api/ws", { websocket: true }, (socket: any) => {
     const unsubscribe = service.events.subscribe((event) => {
       if (socket.readyState === 1) {
-        socket.send(JSON.stringify(event));
+        const payload = event.payload as
+          | { conversationId?: unknown }
+          | undefined;
+        const scope = event.taskId
+          ? { kind: "task", id: event.taskId }
+          : payload?.conversationId
+            ? { kind: "conversation", id: String(payload.conversationId) }
+            : undefined;
+        socket.send(JSON.stringify({ ...event, scope }));
       }
     });
     socket.send(
@@ -216,6 +225,271 @@ export async function buildApp(service: BugfixService) {
         return reply.code(404).send({ error: message });
       }
       return reply.code(400).send({ error: message });
+    }
+  });
+
+  app.get("/api/projects/:projectId/conversations", async (request) => {
+    const { projectId } = request.params as { projectId: string };
+    return service.conversationService.listConversations(projectId);
+  });
+
+  app.post("/api/projects/:projectId/conversations", async (request, reply) => {
+    const { projectId } = request.params as { projectId: string };
+    try {
+      return await service.conversationService.createConversation({
+        ...(request.body ?? {}),
+        projectId,
+      });
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/conversations/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const conversation = service.conversationService.getConversation(id);
+    if (!conversation) {
+      return reply.code(404).send({ error: "Conversation not found" });
+    }
+    return conversation;
+  });
+
+  app.patch("/api/conversations/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return service.conversationService.updateConversation(id, request.body);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message === "Conversation not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  app.delete("/api/conversations/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.deleteConversation(id);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message === "Conversation not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
+    }
+  });
+
+  app.post("/api/conversations/:id/messages", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      const result = await service.conversationService.sendMessage(
+        id,
+        request.body,
+      );
+      return result;
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/steer", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.steerConversation(
+        id,
+        request.body,
+      );
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/interrupt", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await service.conversationService.interruptConversation(id);
+      return { interrupted: true };
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/fork", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { lastTurnId?: string | null } | null;
+    try {
+      return await service.conversationService.forkConversation(id, {
+        lastTurnId: body?.lastTurnId ?? null,
+      });
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/compact", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.compactConversation(id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/archive", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.archiveConversation(id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/conversations/:id/name", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { title?: string } | null;
+    if (!body?.title?.trim()) {
+      return reply.code(400).send({ error: "title is required" });
+    }
+    try {
+      return service.conversationService.updateConversation(id, {
+        title: body.title,
+      });
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/conversations/:id/turns", async (request) => {
+    const { id } = request.params as { id: string };
+    const { limit, offset } = request.query as {
+      limit?: string;
+      offset?: string;
+    };
+    return service.conversationService.listTurns(id, {
+      limit: limit ? Number(limit) : 200,
+      offset: offset ? Number(offset) : 0,
+    });
+  });
+
+  app.get("/api/conversations/:id/turns/:turnId/items", async (request) => {
+    const { id, turnId } = request.params as { id: string; turnId: string };
+    const { afterSeq, limit } = request.query as {
+      afterSeq?: string;
+      limit?: string;
+    };
+    return service.conversationService.listItems(id, {
+      turnId,
+      afterSeq: afterSeq ? Number(afterSeq) : 0,
+      limit: limit ? Number(limit) : 500,
+    });
+  });
+
+  app.get("/api/conversations/:id/events", async (request) => {
+    const { id } = request.params as { id: string };
+    const { afterSeq, limit } = request.query as {
+      afterSeq?: string;
+      limit?: string;
+    };
+    return service.conversationService.listEvents(id, {
+      afterSeq: afterSeq ? Number(afterSeq) : 0,
+      limit: limit ? Number(limit) : 1000,
+    });
+  });
+
+  app.get("/api/conversations/:id/models", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return await service.conversationService.listModels(id);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/conversations/:id/approvals", async (request) => {
+    const { id } = request.params as { id: string };
+    return service.conversationService.getPendingApprovals(id);
+  });
+
+  app.post(
+    "/api/conversations/:id/approvals/:approvalId/decision",
+    async (request, reply) => {
+      const { id, approvalId } = request.params as {
+        id: string;
+        approvalId: string;
+      };
+      const body = request.body as {
+        decision?: "accept" | "acceptForSession" | "decline" | "cancel";
+      } | null;
+      if (!body?.decision) {
+        return reply.code(400).send({ error: "decision is required" });
+      }
+      try {
+        service.conversationService.decideApproval(
+          id,
+          approvalId,
+          body.decision,
+        );
+        return { decided: true };
+      } catch (error) {
+        return reply.code(400).send({ error: (error as Error).message });
+      }
+    },
+  );
+
+  app.get("/api/conversations/:id/clarification", async (request) => {
+    const { id } = request.params as { id: string };
+    return service.conversationService.getPendingClarification(id);
+  });
+
+  app.post("/api/conversations/:id/clarification", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as
+      | {
+          clarificationId?: string;
+          answers?: Record<string, { answers?: string[] }>;
+        }
+      | null;
+    if (!body?.clarificationId || !body.answers) {
+      return reply.code(400).send({
+        error: "clarificationId and answers are required",
+      });
+    }
+    const answers: Record<string, { answers: string[] }> = {};
+    for (const [questionId, value] of Object.entries(body.answers)) {
+      answers[questionId] = {
+        answers: Array.isArray(value?.answers)
+          ? value.answers.map((item) => String(item))
+          : [],
+      };
+    }
+    try {
+      service.conversationService.answerClarification(
+        id,
+        body.clarificationId,
+        answers,
+      );
+      return { answered: true };
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/projects/:projectId/fs/search", async (request, reply) => {
+    const { projectId } = request.params as { projectId: string };
+    const { query } = request.query as { query?: string };
+    const project = service.projects.get(projectId);
+    if (!project) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    try {
+      const registry = new DynamicToolRegistry(project.repoPath);
+      return await registry.call({
+        tool: "fuzzyFileSearch",
+        arguments: { query: query ?? "" },
+      });
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
     }
   });
 
