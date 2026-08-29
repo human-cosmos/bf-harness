@@ -489,7 +489,7 @@ export function QuickCommandPalette({
 }
 
 export function ConversationListPage() {
-  const { projectId } = useParams();
+  const { id: projectId } = useParams();
   const navigate = useNavigate();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -568,7 +568,7 @@ export function ConversationListPage() {
 }
 
 export function ConversationPage() {
-  const { conversationId, projectId } = useParams();
+  const { id: projectId, conversationId } = useParams();
   const navigate = useNavigate();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [items, setItems] = useState<ConversationItem[]>([]);
