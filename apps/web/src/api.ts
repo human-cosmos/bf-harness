@@ -1,6 +1,8 @@
 import type {
   PendingClarification,
   PromptTemplateKey,
+  RemoteCloneJob,
+  SystemSettings,
   TaskAttention,
 } from "@bugfix-harness/shared";
 
@@ -9,6 +11,9 @@ export type {
   ClarificationQuestion,
   PendingClarification,
   PromptTemplateKey,
+  RemoteCloneJob,
+  RemoteCloneProgress,
+  SystemSettings,
   TaskAttention,
 } from "@bugfix-harness/shared";
 
@@ -34,16 +39,53 @@ export interface ValidationCommand {
   required?: boolean;
 }
 
+export type ProjectSource = "local" | "remote";
+
+export type RemoteHost = "github" | "gitlab";
+
 export interface Project {
   id: string;
   name: string;
   repoPath: string;
+  source: ProjectSource;
+  remoteUrl: string | null;
+  remoteHost: RemoteHost | null;
+  defaultBranch: string | null;
   instructionSources: string[];
   validationCommands: ValidationCommand[];
   allowedPaths: string[];
   forbiddenPaths: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export type CreateProjectInput = Omit<
+  Project,
+  | "id"
+  | "createdAt"
+  | "updatedAt"
+  | "source"
+  | "remoteUrl"
+  | "remoteHost"
+  | "defaultBranch"
+> & {
+  source?: ProjectSource;
+  remoteUrl?: string | null;
+  remoteHost?: RemoteHost | null;
+  defaultBranch?: string | null;
+};
+
+export interface CreateProjectFromRemoteInput {
+  name?: string;
+  remoteUrl: string;
+  remoteHost?: RemoteHost;
+  username?: string;
+  passwordOrToken?: string;
+  defaultBranch?: string;
+  instructionSources?: string[];
+  validationCommands?: ValidationCommand[];
+  allowedPaths?: string[];
+  forbiddenPaths?: string[];
 }
 
 export interface ProjectSummary extends Project {
@@ -239,6 +281,25 @@ export interface PromptTemplateSetting {
   defaultTemplate: string;
 }
 
+export interface SystemSettingsResponse {
+  settings: SystemSettings;
+  defaults: SystemSettings;
+}
+
+export interface CodexRuntimeInfo {
+  runtimeCommand: string;
+  codexBin: string | null;
+  source: "explicit" | "env" | "fallback" | "local-build" | "path" | null;
+  available: boolean;
+  warning?: string;
+  candidates: Array<{
+    path: string;
+    source: "explicit" | "env" | "fallback" | "local-build" | "path";
+    available: boolean;
+    reason?: string;
+  }>;
+}
+
 export type ConversationSandboxMode =
   | "read-only"
   | "workspace-write"
@@ -392,8 +453,15 @@ export const api = {
   listProjects: () => request<Project[]>("/api/projects"),
   listProjectSummaries: () =>
     request<ProjectSummary[]>("/api/projects/summary"),
-  createProject: (input: Omit<Project, "id" | "createdAt" | "updatedAt">) =>
+  createProject: (input: CreateProjectInput) =>
     request<Project>("/api/projects", { method: "POST", body: JSON.stringify(input) }),
+  createProjectFromRemote: (input: CreateProjectFromRemoteInput) =>
+    request<{ jobId: string; job: RemoteCloneJob }>("/api/projects/remote", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getRemoteCloneJob: (jobId: string) =>
+    request<{ job: RemoteCloneJob }>(`/api/projects/remote/${jobId}`),
   pickDirectory: () =>
     request<{ path: string | null; isGitRepo: boolean; repoName: string | null }>(
       "/api/fs/pick-directory",
@@ -526,6 +594,27 @@ export const api = {
     );
   },
   diagnostics: () => request<Record<string, unknown>>("/api/diagnostics"),
+  getSystemSettings: () =>
+    request<SystemSettingsResponse>("/api/settings"),
+  saveSystemSettings: (settings: SystemSettings) =>
+    request<SystemSettingsResponse>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ settings }),
+    }),
+  resetSystemSettings: () =>
+    request<SystemSettingsResponse>("/api/settings/reset", {
+      method: "POST",
+    }),
+  getCodexRuntime: () => request<CodexRuntimeInfo>("/api/runtime/codex"),
+  saveCodexRuntime: (path: string) =>
+    request<CodexRuntimeInfo>("/api/runtime/codex", {
+      method: "PUT",
+      body: JSON.stringify({ path }),
+    }),
+  pickCodexFile: () =>
+    request<{ path: string | null }>("/api/fs/pick-file", {
+      method: "POST",
+    }),
   getPromptTemplates: () =>
     request<PromptTemplateSetting[]>("/api/settings/prompts"),
   savePromptTemplates: (

@@ -6,6 +6,7 @@ import {
   planSchema,
   type ClarificationQuestion,
   type RepairPlan,
+  type SystemSettings,
   type Worktree,
 } from "@bugfix-harness/shared";
 import { AgentSessionRepository } from "../repositories/agent-session-repository.js";
@@ -73,14 +74,11 @@ export class AgentOrchestrator {
     private readonly sessions: AgentSessionRepository,
     private readonly events: AgentEventRepository,
     private readonly plans: PlanApprovalRepository,
-    private readonly codexBin: string,
+    private readonly getCodexBin: () => string,
     private readonly promptTemplates: PromptTemplateRepository,
     private readonly prepareWorktree: (taskId: string) => Promise<Worktree>,
     private readonly clarifications: ClarificationCoordinator,
-    private readonly analysisTimeoutMs: number,
-    private readonly implementationTimeoutMs: number,
-    private readonly analysisMaxTimeoutMs: number | null,
-    private readonly implementationMaxTimeoutMs: number | null,
+    private readonly getSystemSettings: () => SystemSettings,
   ) {}
 
   private readonly activeRuntimes = new Map<string, AppServerRuntime>();
@@ -150,7 +148,7 @@ export class AgentOrchestrator {
       });
 
     const runtime = new AppServerRuntime({
-      codexBin: this.codexBin,
+      codexBin: this.getCodexBin(),
       cwd: worktree.path,
       approvalMode: "decline",
     }).start();
@@ -188,11 +186,12 @@ export class AgentOrchestrator {
         title: "Bugfix Harness",
         version: "0.1.0",
       });
+      const settings = this.getSystemSettings();
       await runtime.startThread({
         cwd: worktree.path,
         sandbox: "read-only",
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
+        approvalPolicy: settings.security.analyzeApprovalPolicy,
+        approvalsReviewer: settings.security.analyzeApprovalsReviewer,
         ephemeral: false,
         developerInstructions: developerInstructions || undefined,
       });
@@ -208,11 +207,14 @@ export class AgentOrchestrator {
           },
         ],
         outputSchema: planOutputSchema,
-        planMode: true,
+        approvalPolicy: settings.security.analyzeApprovalPolicy,
+        approvalsReviewer: settings.security.analyzeApprovalsReviewer,
+        model: settings.models.bugfixModel ?? null,
+        effort: settings.models.bugfixReasoningEffort ?? null,
       });
       await runtime.waitForTurnCompletion({
-        idleTimeoutMs: this.analysisTimeoutMs,
-        maxTimeoutMs: this.analysisMaxTimeoutMs,
+        idleTimeoutMs: settings.agent.analysisIdleTimeoutMs,
+        maxTimeoutMs: settings.agent.analysisMaxDurationMs,
       });
 
       const plan = planSchema.parse(JSON.parse(stripCodeFences(runtime.getAgentText())));
@@ -268,7 +270,7 @@ export class AgentOrchestrator {
     });
 
     const runtime = new AppServerRuntime({
-      codexBin: this.codexBin,
+      codexBin: this.getCodexBin(),
       cwd: worktree.path,
       approvalMode: "decline",
     }).start();
@@ -346,9 +348,10 @@ export class AgentOrchestrator {
         title: "Bugfix Harness",
         version: "0.1.0",
       });
+      const settings = this.getSystemSettings();
       await runtime.resumeThread(session.codexThreadId, {
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
+        approvalPolicy: settings.security.implementApprovalPolicy,
+        approvalsReviewer: settings.security.implementApprovalsReviewer,
         developerInstructions: developerInstructions || undefined,
       });
       await runtime.startTurn({
@@ -364,8 +367,10 @@ export class AgentOrchestrator {
             ),
           },
         ],
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
+        approvalPolicy: settings.security.implementApprovalPolicy,
+        approvalsReviewer: settings.security.implementApprovalsReviewer,
+        model: settings.models.bugfixModel ?? null,
+        effort: settings.models.bugfixReasoningEffort ?? null,
         sandboxPolicy: {
           type: "workspaceWrite",
           writableRoots: [worktree.path],
@@ -375,8 +380,8 @@ export class AgentOrchestrator {
         },
       });
       await runtime.waitForTurnCompletion({
-        idleTimeoutMs: this.implementationTimeoutMs,
-        maxTimeoutMs: this.implementationMaxTimeoutMs,
+        idleTimeoutMs: settings.agent.implementationIdleTimeoutMs,
+        maxTimeoutMs: settings.agent.implementationMaxDurationMs,
       });
       const output = runtime.getAgentText();
       this.workflow.transitionTask(taskId, "VALIDATING");
@@ -435,7 +440,7 @@ export class AgentOrchestrator {
     });
 
     const runtime = new AppServerRuntime({
-      codexBin: this.codexBin,
+      codexBin: this.getCodexBin(),
       cwd: worktree.path,
       approvalMode: "decline",
     }).start();

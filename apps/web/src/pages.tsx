@@ -28,12 +28,17 @@ import {
   type ProjectSummary,
   type PromptTemplateKey,
   type PromptTemplateSetting,
+  type RemoteCloneJob,
   type TaskAttention,
   type TaskDetail,
   type ValidationCommand,
   type ValidationOutcome,
 } from "./api.js";
-import { decodeGitPath, MAX_PROMPT_TEMPLATE_LENGTH } from "@bugfix-harness/shared";
+import {
+  decodeGitPath,
+  MAX_PROMPT_TEMPLATE_LENGTH,
+  type SystemSettings,
+} from "@bugfix-harness/shared";
 import { useHarnessEvents } from "./use-harness-events.js";
 import { useWorkflowState } from "./use-workflow-state.js";
 import { TaskShell } from "./TaskShell.js";
@@ -1243,9 +1248,44 @@ export function NewProjectPage() {
   const [projectName, setProjectName] = useState("");
   const [repoError, setRepoError] = useState("");
   const [picking, setPicking] = useState(false);
+  const [source, setSource] = useState<"local" | "remote">("local");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [passwordOrToken, setPasswordOrToken] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("");
+  const [cloneJob, setCloneJob] = useState<RemoteCloneJob | null>(null);
+  const [projectDefaults, setProjectDefaults] =
+    useState<SystemSettings["projectDefaults"] | null>(null);
+  const [instructionSourcesText, setInstructionSourcesText] = useState(
+    DEFAULT_PROJECT_FIELDS.instructionSources,
+  );
+  const [allowedPathsText, setAllowedPathsText] = useState(
+    DEFAULT_PROJECT_FIELDS.allowedPaths,
+  );
+  const [forbiddenPathsText, setForbiddenPathsText] = useState(
+    DEFAULT_PROJECT_FIELDS.forbiddenPaths,
+  );
   const [validationCommands, setValidationCommands] = useState<ValidationCommand[]>(
     () => parseValidationCommands(DEFAULT_PROJECT_FIELDS.validationCommands),
   );
+
+  useEffect(() => {
+    api
+      .getSystemSettings()
+      .then((response) => {
+        const defaults = response.settings.projectDefaults;
+        setProjectDefaults(defaults);
+        setInstructionSourcesText(defaults.instructionSources.join("\n"));
+        setAllowedPathsText(defaults.allowedPaths.join("\n"));
+        setForbiddenPathsText(defaults.forbiddenPaths.join("\n"));
+        if (defaults.validationCommands.length > 0) {
+          setValidationCommands(defaults.validationCommands);
+        }
+      })
+      .catch(() => {
+        // The local constants are a safe fallback when settings are unavailable.
+      });
+  }, []);
 
   function updateCommand(
     index: number,
@@ -1265,13 +1305,14 @@ export function NewProjectPage() {
   }
 
   function addCommand() {
+    const template = projectDefaults?.newValidationCommand;
     setValidationCommands((current) => [
       ...current,
       {
-        id: `command-${Date.now()}`,
-        label: "检查命令",
-        command: ["npm", "run", "check"],
-        timeoutSec: 300,
+        id: `${template?.id ?? "check"}-${Date.now()}`,
+        label: template?.label ?? "检查命令",
+        command: template?.command ?? ["npm", "run", "check"],
+        timeoutSec: template?.timeoutSec ?? 300,
       },
     ]);
   }
@@ -1281,6 +1322,45 @@ export function NewProjectPage() {
       current.filter((_, commandIndex) => commandIndex !== index),
     );
   }
+
+  useEffect(() => {
+    const jobId = cloneJob?.id;
+    if (!jobId) return;
+
+    let disposed = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (timer) clearInterval(timer);
+    };
+
+    const tick = async () => {
+      try {
+        const { job } = await api.getRemoteCloneJob(jobId);
+        if (disposed) return;
+        setCloneJob(job);
+        if (job.status === "succeeded") {
+          stop();
+          navigate("/");
+        } else if (job.status === "failed") {
+          stop();
+          setError(job.error ?? "克隆失败");
+        }
+      } catch (err) {
+        if (!disposed) {
+          stop();
+          setError((err as Error).message);
+        }
+      }
+    };
+
+    void tick();
+    timer = setInterval(tick, 700);
+
+    return () => {
+      disposed = true;
+      stop();
+    };
+  }, [cloneJob?.id, navigate]);
 
   async function pickPath() {
     setPicking(true);
@@ -1303,8 +1383,12 @@ export function NewProjectPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (repoError) {
+    if (source === "local" && repoError) {
       setError(repoError);
+      return;
+    }
+    if (source === "remote" && !remoteUrl.trim()) {
+      setError("请填写远程仓库地址。");
       return;
     }
     if (validationCommands.length === 0) {
@@ -1314,16 +1398,34 @@ export function NewProjectPage() {
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
+    const instructionSources = lines(instructionSourcesText);
+    const allowedPaths = lines(allowedPathsText);
+    const forbiddenPaths = lines(forbiddenPathsText);
     try {
-      await api.createProject({
-        name: projectName.trim(),
-        repoPath,
-        instructionSources: lines(String(form.get("instructionSources") ?? "")),
-        validationCommands,
-        allowedPaths: lines(String(form.get("allowedPaths") ?? "")),
-        forbiddenPaths: lines(String(form.get("forbiddenPaths") ?? "")),
-      });
-      navigate("/");
+      if (source === "remote") {
+        const result = await api.createProjectFromRemote({
+          name: projectName.trim() || undefined,
+          remoteUrl: remoteUrl.trim(),
+          username: username.trim() || undefined,
+          passwordOrToken: passwordOrToken || undefined,
+          defaultBranch: defaultBranch.trim() || undefined,
+          instructionSources,
+          validationCommands,
+          allowedPaths,
+          forbiddenPaths,
+        });
+        setCloneJob(result.job);
+      } else {
+        await api.createProject({
+          name: projectName.trim(),
+          repoPath,
+          instructionSources,
+          validationCommands,
+          allowedPaths,
+          forbiddenPaths,
+        });
+        navigate("/");
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1339,51 +1441,155 @@ export function NewProjectPage() {
           <div className="form-section">
             <div className="form-section-heading">
               <h2>1. 项目信息</h2>
-              <span className="field-hint">选择要修复的本地 Git 仓库</span>
+              <span className="field-hint">
+                {source === "local"
+                  ? "选择要修复的本地 Git 仓库"
+                  : "填写远程仓库地址，代码会克隆到本地"}
+              </span>
             </div>
-          <label className="field">
-            名称 <span className="required-mark">必填</span>
-            <input
-              name="name"
-              required
-              aria-label="名称"
-              placeholder="例如：web-service"
-              value={projectName}
-              onChange={(event) => {
-                setProjectName(event.target.value);
-                setError("");
-              }}
-            />
-          </label>
-          <div className="field">
-            <label htmlFor="repoPath">Git 仓库路径</label>
-            <div className="input-group">
+            <div className="field">
+              <div className="radio-row">
+                <label className="radio-option">
+                  <input
+                    type="radio"
+                    name="source"
+                    checked={source === "local"}
+                    onChange={() => {
+                      setSource("local");
+                      setError("");
+                      setRepoError("");
+                    }}
+                  />
+                  本地目录
+                </label>
+                <label className="radio-option">
+                  <input
+                    type="radio"
+                    name="source"
+                    checked={source === "remote"}
+                    onChange={() => {
+                      setSource("remote");
+                      setError("");
+                    }}
+                  />
+                  远程仓库（GitHub / GitLab）
+                </label>
+              </div>
+            </div>
+            <label className="field">
+              名称{" "}
+              {source === "local" ? (
+                <span className="required-mark">必填</span>
+              ) : null}
               <input
-                id="repoPath"
-                name="repoPath"
-                required
-                aria-label="Git 仓库路径"
-                placeholder="/path/to/repo"
-                value={repoPath}
+                name="name"
+                required={source === "local"}
+                aria-label="名称"
+                placeholder={
+                  source === "local" ? "例如：web-service" : "留空则使用仓库名"
+                }
+                value={projectName}
                 onChange={(event) => {
-                  setRepoPath(event.target.value);
-                  setRepoError("");
+                  setProjectName(event.target.value);
+                  setError("");
                 }}
               />
-              <button type="button" className="btn" onClick={pickPath} disabled={picking}>
-                {picking ? "选择中..." : "选择目录"}
-              </button>
-            </div>
-            {repoError ? <span className="field-error">{repoError}</span> : null}
-          </div>
-          <label className="field">
-            规范来源（每行一个路径）
-            <textarea
-              name="instructionSources"
-              aria-label="规范来源"
-              defaultValue={DEFAULT_PROJECT_FIELDS.instructionSources}
-            />
-          </label>
+            </label>
+            {source === "local" ? (
+              <div className="field">
+                <label htmlFor="repoPath">Git 仓库路径</label>
+                <div className="input-group">
+                  <input
+                    id="repoPath"
+                    name="repoPath"
+                    required
+                    aria-label="Git 仓库路径"
+                    placeholder="/path/to/repo"
+                    value={repoPath}
+                    onChange={(event) => {
+                      setRepoPath(event.target.value);
+                      setRepoError("");
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={pickPath}
+                    disabled={picking}
+                  >
+                    {picking ? "选择中..." : "选择目录"}
+                  </button>
+                </div>
+                {repoError ? (
+                  <span className="field-error">{repoError}</span>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <label className="field">
+                  仓库地址 <span className="required-mark">必填</span>
+                  <input
+                    name="remoteUrl"
+                    required
+                    aria-label="仓库地址"
+                    placeholder="https://github.com/owner/repo"
+                    value={remoteUrl}
+                    onChange={(event) => {
+                      setRemoteUrl(event.target.value);
+                      setError("");
+                    }}
+                  />
+                  <span className="field-hint">
+                    仅支持 github.com / gitlab.com 的 HTTPS 地址
+                  </span>
+                </label>
+                <label className="field">
+                  用户名（私有仓库）
+                  <input
+                    name="username"
+                    aria-label="用户名"
+                    placeholder="私有仓库的用户名，公开仓库留空"
+                    value={username}
+                    autoComplete="off"
+                    onChange={(event) => setUsername(event.target.value)}
+                  />
+                </label>
+                <label className="field">
+                  密码 / 令牌（私有仓库）
+                  <input
+                    name="passwordOrToken"
+                    type="password"
+                    aria-label="密码或令牌"
+                    placeholder="GitHub 请填 Personal Access Token"
+                    value={passwordOrToken}
+                    autoComplete="new-password"
+                    onChange={(event) => setPasswordOrToken(event.target.value)}
+                  />
+                  <span className="field-hint">
+                    GitHub 私有仓库已不支持账号密码，请使用 Personal Access Token
+                  </span>
+                </label>
+                <label className="field">
+                  分支（可选）
+                  <input
+                    name="defaultBranch"
+                    aria-label="分支"
+                    placeholder="留空使用默认分支"
+                    value={defaultBranch}
+                    onChange={(event) => setDefaultBranch(event.target.value)}
+                  />
+                </label>
+              </>
+            )}
+            <label className="field">
+              规范来源（每行一个路径）
+              <textarea
+                name="instructionSources"
+                aria-label="规范来源"
+                value={instructionSourcesText}
+                onChange={(event) => setInstructionSourcesText(event.target.value)}
+              />
+            </label>
           </div>
           <div className="form-section">
             <div className="form-section-heading">
@@ -1462,7 +1668,8 @@ export function NewProjectPage() {
             <textarea
               name="allowedPaths"
               aria-label="允许修改路径"
-              defaultValue={DEFAULT_PROJECT_FIELDS.allowedPaths}
+              value={allowedPathsText}
+              onChange={(event) => setAllowedPathsText(event.target.value)}
             />
           </label>
           <label className="field">
@@ -1470,15 +1677,43 @@ export function NewProjectPage() {
             <textarea
               name="forbiddenPaths"
               aria-label="禁止修改路径"
-              defaultValue={DEFAULT_PROJECT_FIELDS.forbiddenPaths}
+              value={forbiddenPathsText}
+              onChange={(event) => setForbiddenPathsText(event.target.value)}
             />
           </label>
           </div>
         </div>
+        {cloneJob && cloneJob.status === "running" ? (
+          <div className="card form-card">
+            <div className="clone-progress">
+              <div className="clone-progress-head">
+                <span>{cloneJob.progress.message}</span>
+                {cloneJob.progress.percent !== null ? (
+                  <span>{cloneJob.progress.percent}%</span>
+                ) : null}
+              </div>
+              <div className="clone-progress-track">
+                <div
+                  className="clone-progress-fill"
+                  style={{ width: `${cloneJob.progress.percent ?? 0}%` }}
+                />
+              </div>
+              <span className="field-hint">正在克隆远程仓库，请稍候...</span>
+            </div>
+          </div>
+        ) : null}
         <ErrorNotice message={error} />
         <div className="form-actions">
-          <button className="btn-primary" type="submit" disabled={busy}>
-            {busy ? "保存中..." : "保存"}
+          <button
+            className="btn-primary"
+            type="submit"
+            disabled={busy || cloneJob?.status === "running"}
+          >
+            {cloneJob?.status === "running"
+              ? "克隆中..."
+              : busy
+                ? "保存中..."
+                : "保存"}
           </button>
         </div>
       </form>

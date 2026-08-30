@@ -12,6 +12,7 @@ export interface AppConfig {
   home: string;
   databasePath: string;
   worktreeRoot: string;
+  reposRoot: string;
   port: number;
   host: string;
   codexBin: string;
@@ -28,6 +29,7 @@ export function loadConfig(): AppConfig {
     home,
     databasePath: join(home, "data.sqlite"),
     worktreeRoot: join(home, "worktrees"),
+    reposRoot: join(home, "repos"),
     port: Number(process.env.BUGFIX_HARNESS_PORT ?? 4317),
     host: process.env.BUGFIX_HARNESS_HOST ?? "127.0.0.1",
     codexBin:

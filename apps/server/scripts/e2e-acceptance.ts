@@ -47,10 +47,8 @@ try {
   const plan = await service.agent.analyze(created.task.id);
   await service.workflow.approvePlan(created.task.id, "approved by e2e");
   const output = await service.agent.implement(created.task.id);
-  await service.workflow.transitionTask(created.task.id, "VALIDATING");
   const validations = await service.execution.runValidations(created.task.id);
   const report = await service.execution.buildReport(created.task.id);
-  await service.workflow.transitionTask(created.task.id, "WAITING_FOR_ACCEPTANCE");
   await service.workflow.transitionTask(created.task.id, "ACCEPTED");
 
   console.log("E2E_ACCEPTANCE_OK", {

@@ -67,15 +67,20 @@ export function validationFailureSignature(
     .join("|");
 }
 
-export function canAutoRepair(retryCount: number): boolean {
-  return retryCount < MAX_AUTO_REPAIR_ROUNDS;
+export function canAutoRepair(
+  retryCount: number,
+  maxAutoRepairRounds: number = MAX_AUTO_REPAIR_ROUNDS,
+): boolean {
+  return retryCount < maxAutoRepairRounds;
 }
 
 export function nextValidationAction(input: {
   currentRound: number;
   sameFailure: boolean;
+  maxAutoRepairRounds?: number;
 }): "REPAIR" | "BLOCKED" | "WAIT_FOR_ACCEPTANCE" {
-  if (input.sameFailure && input.currentRound >= MAX_AUTO_REPAIR_ROUNDS) {
+  const maxRounds = input.maxAutoRepairRounds ?? MAX_AUTO_REPAIR_ROUNDS;
+  if (input.sameFailure && input.currentRound >= maxRounds) {
     return "BLOCKED";
   }
   return "REPAIR";

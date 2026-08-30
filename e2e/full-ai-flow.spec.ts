@@ -50,9 +50,9 @@ test("complete AI bugfix main flow through the web UI", async ({
   await page.goto("/tasks/new");
   await page.getByLabel("项目").selectOption(projectId);
   await page
-    .getByLabel("问题描述")
+    .getByLabel("问题描述", { exact: true })
     .fill("Create a result.txt file containing exactly AI_E2E_OK.");
-  await page.getByRole("button", { name: "创建" }).click();
+  await page.getByRole("button", { name: "创建任务" }).click();
   await expect(page).toHaveURL(/\/tasks\/[0-9a-f-]+$/);
   taskId = page.url().split("/").pop()!;
 

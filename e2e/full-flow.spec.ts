@@ -41,9 +41,9 @@ test("create a bugfix task through the web UI", async ({ page, request }) => {
   await page.goto("/tasks/new");
   await page.getByLabel("项目").selectOption(projectId);
   await page
-    .getByLabel("问题描述")
+    .getByLabel("问题描述", { exact: true })
     .fill("The application fails when reading README.md");
-  await page.getByRole("button", { name: "创建" }).click();
+  await page.getByRole("button", { name: "创建任务" }).click();
 
   await expect(page).toHaveURL(/\/tasks\/[0-9a-f-]+$/);
   await expect(

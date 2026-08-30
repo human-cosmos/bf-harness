@@ -12,9 +12,9 @@ import {
   ProjectPage,
   ProjectsPage,
   ReportPage,
-  SettingsPage,
   TaskDetailPage,
 } from "./pages.js";
+import { SettingsPage } from "./system-settings-page.js";
 import {
   ConversationListPage as ChatListPage,
   ConversationPage as ChatPage,

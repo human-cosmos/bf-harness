@@ -59,10 +59,18 @@ export interface TaskAttention {
   };
 }
 
+export type ProjectSource = "local" | "remote";
+
+export type RemoteHost = "github" | "gitlab";
+
 export interface Project {
   id: string;
   name: string;
   repoPath: string;
+  source: ProjectSource;
+  remoteUrl?: string | null;
+  remoteHost?: RemoteHost | null;
+  defaultBranch?: string | null;
   instructionSources: string[];
   validationCommands: ValidationCommand[];
   allowedPaths: string[];
@@ -117,4 +125,22 @@ export interface Worktree {
   createdAt: string;
   updatedAt: string;
   error?: string;
+}
+
+export interface RemoteCloneProgress {
+  phase: "preflight" | "cloning" | "validating" | "finalizing";
+  percent: number | null;
+  message: string;
+}
+
+export interface RemoteCloneJob {
+  id: string;
+  status: "running" | "succeeded" | "failed";
+  remoteUrl: string;
+  targetDir: string;
+  progress: RemoteCloneProgress;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  projectId?: string;
 }

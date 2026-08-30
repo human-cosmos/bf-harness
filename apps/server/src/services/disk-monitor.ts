@@ -1,6 +1,4 @@
 import { statfsSync } from "node:fs";
-import { MAX_TOTAL_DATA_BYTES, WARN_RATIO } from "./retention.js";
-
 export interface DiskUsage {
   path: string;
   totalBytes: number;
@@ -11,6 +9,19 @@ export interface DiskUsage {
 }
 
 export class DiskMonitor {
+  private readonly totalDataLimitBytes: number;
+  private readonly warnRatio: number;
+
+  constructor(
+    options: {
+      totalDataLimitBytes?: number;
+      warnRatio?: number;
+    } = {},
+  ) {
+    this.totalDataLimitBytes = options.totalDataLimitBytes ?? 5 * 1024 * 1024 * 1024;
+    this.warnRatio = options.warnRatio ?? 0.8;
+  }
+
   check(path: string): DiskUsage {
     const stats = statfsSync(path);
     const blockSize = Number(stats.bsize);
@@ -25,7 +36,7 @@ export class DiskMonitor {
       freeBytes,
       usedBytes,
       usedRatio,
-      warn: usedBytes >= MAX_TOTAL_DATA_BYTES * WARN_RATIO,
+      warn: usedBytes >= this.totalDataLimitBytes * this.warnRatio,
     };
   }
 }

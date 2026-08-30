@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { WorkflowState } from "./api.js";
 import {
@@ -115,6 +115,10 @@ export function TaskShell({
   }
 
   const stepIndex = stepIndexForStatus(state.task.status);
+  const stepperProgress =
+    WORKFLOW_STEPS.length > 1
+      ? stepIndex / (WORKFLOW_STEPS.length - 1)
+      : 0;
   const nextAction = nextActionForState(state);
   const isTaskDetail = location.pathname === `/tasks/${state.task.id}`;
   const isCurrentActionPage =
@@ -160,7 +164,11 @@ export function TaskShell({
         )}
       </div>
 
-      <div className="workflow-stepper" aria-label="Bugfix 工作流步骤">
+      <div
+        className="workflow-stepper"
+        aria-label="Bugfix 工作流步骤"
+        style={{ "--stepper-progress": stepperProgress } as CSSProperties}
+      >
         {WORKFLOW_STEPS.map((step, index) => {
           const current = index === stepIndex;
           const completed = stepIndex >= 0 && index < stepIndex;

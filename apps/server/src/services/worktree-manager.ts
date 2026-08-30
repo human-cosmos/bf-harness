@@ -19,14 +19,19 @@ export interface WorktreeCreationResult {
 
 export class GitWorktreeManager {
   async validateRepository(repoPath: string): Promise<void> {
-    const { stdout } = await execFileAsync("git", [
-      "-C",
-      repoPath,
-      "rev-parse",
-      "--is-inside-work-tree",
-    ]);
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync("git", [
+        "-C",
+        repoPath,
+        "rev-parse",
+        "--is-inside-work-tree",
+      ]));
+    } catch {
+      throw new Error("该目录不是 Git 仓库，请选择包含 .git 的仓库根目录。");
+    }
     if (stdout.trim() !== "true") {
-      throw new Error(`Not a Git work tree: ${repoPath}`);
+      throw new Error("该目录不是 Git 仓库，请选择包含 .git 的仓库根目录。");
     }
   }
 

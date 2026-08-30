@@ -10,6 +10,7 @@ import {
 import type { BugfixService } from "./services/bugfix-service.js";
 import { DiskMonitor } from "./services/disk-monitor.js";
 import { DynamicToolRegistry } from "./services/dynamic-tool-registry.js";
+import { redactSensitive } from "./services/redaction.js";
 
 function pickDirectory(): Promise<string | null> {
   return new Promise((resolve, reject) => {
@@ -54,6 +55,59 @@ function pickDirectory(): Promise<string | null> {
         "-NoProfile",
         "-Command",
         "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $d.SelectedPath }",
+      ],
+      (error, stdout) => {
+        if (error) return reject(error);
+        const path = stdout.trim();
+        resolve(path || null);
+      },
+    );
+  });
+}
+
+function pickFile(): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    if (platform() === "darwin") {
+      execFile(
+        "osascript",
+        ["-e", 'POSIX path of (choose file with prompt "选择 Codex 可执行文件")'],
+        (error, stdout) => {
+          if (error) {
+            const message = String(error.message ?? "");
+            if (message.includes("cancel") || message.includes("-128")) {
+              return resolve(null);
+            }
+            return reject(error);
+          }
+          const path = stdout.trim();
+          resolve(path || null);
+        },
+      );
+      return;
+    }
+
+    if (platform() === "linux") {
+      execFile(
+        "zenity",
+        ["--file-selection", "--title=选择 Codex 可执行文件"],
+        (error, stdout) => {
+          if (error) {
+            if (error.code === 1) return resolve(null);
+            return reject(error);
+          }
+          const path = stdout.trim();
+          resolve(path || null);
+        },
+      );
+      return;
+    }
+
+    execFile(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Filter = 'Executable Files (*.exe)|*.exe|All Files (*.*)|*.*'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $d.FileName }",
       ],
       (error, stdout) => {
         if (error) return reject(error);
@@ -172,11 +226,72 @@ export async function buildApp(service: BugfixService) {
     }
   });
 
-  app.get("/api/diagnostics", async () => ({
-    runtime: "codex-harness app-server --stdio",
-    dataHome: process.env.BUGFIX_HARNESS_HOME ?? "~/.bugfix-harness",
-    disk: new DiskMonitor().check(process.cwd()),
+  app.post("/api/fs/pick-file", async (_request, reply) => {
+    try {
+      const path = await pickFile();
+      return { path };
+    } catch (error) {
+      return reply.code(400).send({
+        error: (error as Error).message,
+      });
+    }
+  });
+
+  app.get("/api/runtime/codex", async () => {
+    return service.codexRuntime.detect();
+  });
+
+  app.put("/api/runtime/codex", async (request, reply) => {
+    const body = request.body as { path?: string } | null;
+    if (!body?.path?.trim()) {
+      return reply.code(400).send({ error: "path is required" });
+    }
+    try {
+      return service.codexRuntime.saveManualCodexBin(body.path);
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.get("/api/diagnostics", async () => {
+    const systemSettings = service.systemSettings.get();
+    return {
+      runtime: "codex-harness app-server --stdio",
+      dataHome: process.env.BUGFIX_HARNESS_HOME ?? "~/.bugfix-harness",
+      settings: systemSettings,
+      disk: new DiskMonitor({
+        totalDataLimitBytes: systemSettings.storage.totalDataLimitBytes,
+        warnRatio: systemSettings.storage.diskWarnRatio,
+      }).check(process.cwd()),
+    };
+  });
+
+  app.get("/api/settings", async () => ({
+    settings: service.systemSettings.get(),
+    defaults: service.systemSettings.getDefaults(),
   }));
+
+  app.put("/api/settings", async (request, reply) => {
+    const body = request.body as { settings?: unknown } | null;
+    if (!body || typeof body !== "object" || body.settings === undefined) {
+      return reply.code(400).send({ error: "settings is required" });
+    }
+    try {
+      return {
+        settings: service.systemSettings.save(body.settings),
+        defaults: service.systemSettings.getDefaults(),
+      };
+    } catch (error) {
+      return reply.code(400).send({ error: (error as Error).message });
+    }
+  });
+
+  app.post("/api/settings/reset", async () => {
+    return {
+      settings: service.systemSettings.reset(),
+      defaults: service.systemSettings.getDefaults(),
+    };
+  });
 
   app.get("/api/settings/prompts", async () => {
     return service.listPromptTemplates();
@@ -278,6 +393,26 @@ export async function buildApp(service: BugfixService) {
         error: (error as Error).message,
       });
     }
+  });
+
+  app.post("/api/projects/remote", async (request, reply) => {
+    try {
+      const job = service.startRemoteClone(request.body);
+      return reply.code(202).send({ jobId: job.id, job });
+    } catch (error) {
+      return reply.code(400).send({
+        error: redactSensitive((error as Error).message),
+      });
+    }
+  });
+
+  app.get("/api/projects/remote/:jobId", async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    const job = service.getRemoteCloneJob(jobId);
+    if (!job) {
+      return reply.code(404).send({ error: "Clone job not found" });
+    }
+    return { job };
   });
 
   app.delete("/api/projects/:id", async (request, reply) => {

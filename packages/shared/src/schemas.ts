@@ -37,10 +37,18 @@ export const validationCommandSchema = z.object({
   required: z.boolean().optional(),
 });
 
+export const projectSourceSchema = z.enum(["local", "remote"]);
+
+export const remoteHostSchema = z.enum(["github", "gitlab"]);
+
 export const projectSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(120),
   repoPath: absolutePathSchema,
+  source: projectSourceSchema.optional(),
+  remoteUrl: z.string().min(1).nullish(),
+  remoteHost: remoteHostSchema.nullish(),
+  defaultBranch: z.string().min(1).nullish(),
   instructionSources: z.array(z.string().min(1)).default([]),
   validationCommands: z.array(validationCommandSchema).default([]),
   allowedPaths: z.array(z.string().min(1)).default([]),
@@ -61,6 +69,19 @@ export const createProjectInputSchema = projectSchema
     allowedPaths: z.array(z.string().min(1)).default([]),
     forbiddenPaths: z.array(z.string().min(1)).default([]),
   });
+
+export const createProjectFromRemoteInputSchema = z.object({
+  name: z.string().max(120).optional(),
+  remoteUrl: z.string().min(1),
+  remoteHost: remoteHostSchema.optional(),
+  username: z.string().max(200).optional(),
+  passwordOrToken: z.string().max(500).optional(),
+  defaultBranch: z.string().min(1).max(200).optional(),
+  instructionSources: z.array(z.string().min(1)).default([]),
+  validationCommands: z.array(validationCommandSchema).default([]),
+  allowedPaths: z.array(z.string().min(1)).default([]),
+  forbiddenPaths: z.array(z.string().min(1)).default([]),
+});
 
 export const bugfixTaskSchema = z.object({
   id: z.string().uuid(),
@@ -110,6 +131,9 @@ export const taskContractSchema = z.object({
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type CreateProjectFromRemoteInput = z.infer<
+  typeof createProjectFromRemoteInputSchema
+>;
 export type CreateBugfixTaskInput = z.infer<typeof createBugfixTaskInputSchema>;
 
 export function createTaskContract(

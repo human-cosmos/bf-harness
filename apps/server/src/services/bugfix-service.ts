@@ -1,16 +1,21 @@
 import {
   createBugfixTaskInputSchema,
+  createProjectFromRemoteInputSchema,
   createProjectInputSchema,
   createTaskContract,
   MAX_PROMPT_TEMPLATE_LENGTH,
   PROMPT_TEMPLATE_KEYS,
   type PromptTemplateKey,
+  type RemoteCloneJob,
+  type RemoteCloneProgress,
   type RepairPlan,
   type TaskStatus,
+  type ValidationCommand,
   type Worktree,
   unknownPromptTemplatePlaceholders,
 } from "@bugfix-harness/shared";
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -20,17 +25,24 @@ import { TaskRepository } from "../repositories/task-repository.js";
 import { PromptTemplateRepository } from "../repositories/prompt-template-repository.js";
 import { WorktreeRepository } from "../repositories/worktree-repository.js";
 import { GitWorktreeManager } from "./worktree-manager.js";
+import {
+  GitRemoteService,
+  type RemoteRepoInfo,
+} from "./git-remote-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { ExecutionService } from "./execution-service.js";
 import { AgentSessionRepository } from "../repositories/agent-session-repository.js";
 import { AgentEventRepository } from "../repositories/agent-event-repository.js";
 import { AgentOrchestrator } from "./agent-orchestrator.js";
 import { EventBus } from "./event-bus.js";
+import { redactSensitive } from "./redaction.js";
 import {
   ClarificationCoordinator,
   type ClarificationAnswers,
 } from "./clarification-coordinator.js";
 import { ConversationService } from "./conversation-service.js";
+import { CodexRuntimeService } from "./codex-runtime-service.js";
+import { SystemSettingsService } from "./system-settings-service.js";
 import {
   groupFailedValidationRuns,
   nextValidationAction,
@@ -80,12 +92,14 @@ function fallbackTaskTitle(description: string): string {
 export interface BugfixServiceOptions {
   db: AppDatabase;
   worktreeRoot: string;
+  reposRoot?: string;
   eventBus?: EventBus;
   codexBin?: string;
   analysisTimeoutMs?: number;
   implementationTimeoutMs?: number;
   analysisMaxTimeoutMs?: number | null;
   implementationMaxTimeoutMs?: number | null;
+  systemSettings?: SystemSettingsService;
 }
 
 export class BugfixService {
@@ -102,43 +116,35 @@ export class BugfixService {
   readonly events: EventBus;
   readonly clarifications: ClarificationCoordinator;
   readonly conversationService: ConversationService;
+  readonly remoteService: GitRemoteService;
+  readonly systemSettings: SystemSettingsService;
+  readonly codexRuntime: CodexRuntimeService;
   private readonly worktreeRoot: string;
-  private readonly codexBin: string;
-  private readonly analysisTimeoutMs: number;
-  private readonly implementationTimeoutMs: number;
-  private readonly analysisMaxTimeoutMs: number | null;
-  private readonly implementationMaxTimeoutMs: number | null;
+  private readonly reposRoot: string;
   private readonly analysisRuns = new Map<string, AnalysisRun>();
   private readonly backgroundJobs = new Map<string, BackgroundJob>();
+  private readonly cloneJobs = new Map<string, RemoteCloneJob>();
   private readonly activeJobs = new Set<string>();
 
   constructor(options: BugfixServiceOptions) {
     this.events = options.eventBus ?? new EventBus();
+    this.systemSettings = options.systemSettings ?? new SystemSettingsService(options.db);
+    this.codexRuntime = new CodexRuntimeService(
+      this.systemSettings,
+      options.codexBin ??
+        process.env.CODEX_BIN ??
+        (existsSync(localCodexBin) ? localCodexBin : "codex-harness"),
+    );
     this.projects = new ProjectRepository(options.db);
     this.tasks = new TaskRepository(options.db);
     this.worktrees = new WorktreeRepository(options.db);
     this.worktreeManager = new GitWorktreeManager();
+    const settings = this.systemSettings.get();
+    this.remoteService = new GitRemoteService({
+      timeouts: () => this.systemSettings.get().remote,
+    });
     this.worktreeRoot = options.worktreeRoot;
-    this.codexBin =
-      options.codexBin ??
-      process.env.CODEX_BIN ??
-      (existsSync(localCodexBin) ? localCodexBin : "codex-harness");
-    this.analysisTimeoutMs =
-      options.analysisTimeoutMs ??
-      Number(process.env.BUGFIX_HARNESS_ANALYSIS_TIMEOUT_MS ?? 600_000);
-    this.implementationTimeoutMs =
-      options.implementationTimeoutMs ??
-      Number(process.env.BUGFIX_HARNESS_IMPLEMENTATION_TIMEOUT_MS ?? 600_000);
-    this.analysisMaxTimeoutMs =
-      options.analysisMaxTimeoutMs ??
-      this.readOptionalPositiveNumber(
-        process.env.BUGFIX_HARNESS_ANALYSIS_MAX_DURATION_MS,
-      );
-    this.implementationMaxTimeoutMs =
-      options.implementationMaxTimeoutMs ??
-      this.readOptionalPositiveNumber(
-        process.env.BUGFIX_HARNESS_IMPLEMENTATION_MAX_DURATION_MS,
-      );
+    this.reposRoot = options.reposRoot ?? join(dirname(options.worktreeRoot), "repos");
     this.workflow = new WorkflowService(
       this.tasks,
       options.db,
@@ -159,7 +165,15 @@ export class BugfixService {
       db: options.db,
       projects: this.projects,
       eventBus: this.events,
-      codexBin: this.codexBin,
+      getCodexBin: () => this.codexRuntime.resolveCodexBin() ?? "codex-harness",
+      timeoutMs: settings.agent.conversationIdleTimeoutMs,
+      approvalTimeoutMs: settings.agent.approvalTtlMs,
+      defaultPolicy: settings.security.conversationDefaults,
+      defaultSettings: {
+        model: settings.models.conversationModel,
+        reasoningEffort: settings.models.conversationReasoningEffort,
+      },
+      getSystemSettings: () => this.systemSettings.get(),
     });
     this.sessions = new AgentSessionRepository(options.db);
     this.agentEvents = new AgentEventRepository(options.db);
@@ -195,23 +209,12 @@ export class BugfixService {
       this.sessions,
       this.agentEvents,
       this.workflow.plans,
-      this.codexBin,
+      () => this.codexRuntime.resolveCodexBin() ?? "codex-harness",
       this.promptTemplates,
       (taskId) => this.prepareWorktree(taskId),
       this.clarifications,
-      this.analysisTimeoutMs,
-      this.implementationTimeoutMs,
-      this.analysisMaxTimeoutMs,
-      this.implementationMaxTimeoutMs,
+      () => this.systemSettings.get(),
     );
-  }
-
-  private readOptionalPositiveNumber(value: string | undefined): number | null {
-    if (!value) {
-      return null;
-    }
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }
 
   async createProject(input: unknown) {
@@ -223,6 +226,141 @@ export class BugfixService {
     const project = this.projects.create(parsed);
     this.events.publish({ type: "project.created", payload: project });
     return project;
+  }
+
+  startRemoteClone(input: unknown): RemoteCloneJob {
+    const parsed = createProjectFromRemoteInputSchema.parse(input);
+    const info = this.remoteService.parseRemoteUrl(parsed.remoteUrl);
+    const targetDir = this.remoteService.targetDir(this.reposRoot, info);
+
+    if (this.projects.findByRepoPath(targetDir)) {
+      throw new Error("该仓库已经作为项目添加过了");
+    }
+    const existingByUrl = this.projects
+      .list()
+      .find((project) => project.remoteUrl === info.cloneUrl);
+    if (existingByUrl) {
+      throw new Error("该远程仓库已经添加过了");
+    }
+
+    const job: RemoteCloneJob = {
+      id: randomUUID(),
+      status: "running",
+      remoteUrl: info.cloneUrl,
+      targetDir,
+      progress: { phase: "preflight", percent: null, message: "准备克隆..." },
+      startedAt: new Date().toISOString(),
+    };
+    this.cloneJobs.set(job.id, job);
+    this.events.publish({
+      type: "project.clone.started",
+      payload: { jobId: job.id, job },
+    });
+
+    void this.runRemoteClone(job.id, {
+      info,
+      name: parsed.name?.trim() || info.repo,
+      username: parsed.username,
+      passwordOrToken: parsed.passwordOrToken,
+      defaultBranch: parsed.defaultBranch,
+      instructionSources: parsed.instructionSources,
+      validationCommands: parsed.validationCommands,
+      allowedPaths: parsed.allowedPaths,
+      forbiddenPaths: parsed.forbiddenPaths,
+    });
+
+    return job;
+  }
+
+  getRemoteCloneJob(jobId: string): RemoteCloneJob | null {
+    return this.cloneJobs.get(jobId) ?? null;
+  }
+
+  private async runRemoteClone(
+    jobId: string,
+    args: {
+      info: RemoteRepoInfo;
+      name: string;
+      username?: string;
+      passwordOrToken?: string;
+      defaultBranch?: string;
+      instructionSources: string[];
+      validationCommands: ValidationCommand[];
+      allowedPaths: string[];
+      forbiddenPaths: string[];
+    },
+  ): Promise<void> {
+    const job = this.cloneJobs.get(jobId);
+    if (!job) {
+      return;
+    }
+
+    const update = (patch: Partial<RemoteCloneJob>) => {
+      Object.assign(job, patch);
+      this.cloneJobs.set(jobId, { ...job });
+    };
+
+    const emitProgress = (progress: RemoteCloneProgress) => {
+      update({ progress });
+      this.events.publish({
+        type: "project.clone.progress",
+        payload: { jobId, progress },
+      });
+    };
+
+    try {
+      await this.remoteService.clone({
+        remoteUrl: args.info.cloneUrl,
+        username: args.username,
+        passwordOrToken: args.passwordOrToken,
+        defaultBranch: args.defaultBranch,
+        targetDir: job.targetDir,
+        onProgress: emitProgress,
+      });
+
+      update({
+        progress: { phase: "validating", percent: null, message: "正在校验仓库..." },
+      });
+      await this.worktreeManager.validateRepository(job.targetDir);
+
+      update({
+        progress: { phase: "finalizing", percent: 100, message: "正在保存项目..." },
+      });
+      const project = await this.createProject({
+        name: args.name,
+        repoPath: job.targetDir,
+        source: "remote",
+        remoteUrl: args.info.cloneUrl,
+        remoteHost: args.info.host,
+        defaultBranch: args.defaultBranch ?? null,
+        instructionSources: args.instructionSources,
+        validationCommands: args.validationCommands,
+        allowedPaths: args.allowedPaths,
+        forbiddenPaths: args.forbiddenPaths,
+      });
+
+      update({
+        status: "succeeded",
+        projectId: project.id,
+        finishedAt: new Date().toISOString(),
+      });
+      this.events.publish({
+        type: "project.clone.completed",
+        payload: { jobId, project },
+      });
+    } catch (error) {
+      await rm(job.targetDir, { recursive: true, force: true }).catch(() => {});
+      const message = redactSensitive((error as Error).message);
+      update({
+        status: "failed",
+        error: message,
+        finishedAt: new Date().toISOString(),
+      });
+      this.events.publish({
+        type: "project.clone.failed",
+        payload: { jobId, error: message },
+      });
+    }
   }
 
   async deleteProject(projectId: string) {
@@ -254,6 +392,11 @@ export class BugfixService {
 
     for (const task of taskList) {
       this.tasks.delete(task.id);
+    }
+
+    const conversations = this.conversationService.listConversations(projectId);
+    for (const conversation of conversations) {
+      await this.conversationService.deleteConversation(conversation.id);
     }
 
     if (!this.projects.delete(projectId)) {
@@ -390,6 +533,7 @@ export class BugfixService {
     const validationAction = nextValidationAction({
       currentRound,
       sameFailure,
+      maxAutoRepairRounds: this.systemSettings.get().storage.autoRepairRounds,
     });
     if (validationAction === "BLOCKED") {
       this.workflow.transitionTask(taskId, "BLOCKED");
@@ -709,6 +853,7 @@ export class BugfixService {
         branch: result.branch,
       });
       this.worktrees.updateStatus(worktree.id, "READY");
+      worktree = this.worktrees.getByTaskId(task.id)!;
     }
 
     this.events.publish({

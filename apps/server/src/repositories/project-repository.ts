@@ -7,10 +7,18 @@ function parseJson<T>(value: string): T {
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
+  const source = String(row.source ?? "local") as Project["source"];
+  const remoteHost = row.remote_host
+    ? (String(row.remote_host) as Project["remoteHost"])
+    : null;
   return {
     id: String(row.id),
     name: String(row.name),
     repoPath: String(row.repo_path),
+    source,
+    remoteUrl: row.remote_url ? String(row.remote_url) : null,
+    remoteHost,
+    defaultBranch: row.default_branch ? String(row.default_branch) : null,
     instructionSources: parseJson(String(row.instruction_sources)),
     validationCommands: parseJson(String(row.validation_commands)),
     allowedPaths: parseJson(String(row.allowed_paths)),
@@ -44,10 +52,15 @@ export class ProjectRepository {
 
   create(input: CreateProjectInput): Project {
     const now = new Date().toISOString();
+    const source = input.source ?? "local";
     const project: Project = {
       id: randomUUID(),
       name: input.name,
       repoPath: input.repoPath,
+      source,
+      remoteUrl: input.remoteUrl ?? null,
+      remoteHost: input.remoteHost ?? null,
+      defaultBranch: input.defaultBranch ?? null,
       instructionSources: input.instructionSources ?? [],
       validationCommands: input.validationCommands ?? [],
       allowedPaths: input.allowedPaths ?? [],
@@ -59,14 +72,19 @@ export class ProjectRepository {
     this.db
       .prepare(
         `INSERT INTO projects(
-          id, name, repo_path, instruction_sources, validation_commands,
-          allowed_paths, forbidden_paths, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          id, name, repo_path, source, remote_url, remote_host, default_branch,
+          instruction_sources, validation_commands, allowed_paths,
+          forbidden_paths, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         project.id,
         project.name,
         project.repoPath,
+        project.source,
+        project.remoteUrl ?? null,
+        project.remoteHost ?? null,
+        project.defaultBranch ?? null,
         JSON.stringify(project.instructionSources),
         JSON.stringify(project.validationCommands),
         JSON.stringify(project.allowedPaths),

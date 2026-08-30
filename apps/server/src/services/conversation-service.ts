@@ -7,9 +7,12 @@ import {
   type Conversation,
   type ConversationEventKind,
   type ConversationItemType,
+  type ConversationPolicy,
+  type ConversationSettings,
   type ConversationTurnStatus,
   type CreateConversationInput,
   type SendConversationMessageInput,
+  type SystemSettings,
   type UpdateConversationInput,
 } from "@bugfix-harness/shared";
 import type { AppDatabase } from "../db.js";
@@ -35,9 +38,13 @@ export interface ConversationServiceOptions {
   projects: ProjectRepository;
   eventBus?: EventBus;
   codexBin?: string;
+  getCodexBin?: () => string;
   timeoutMs?: number;
   approvalTimeoutMs?: number | null;
   runtimeManager?: ConversationRuntimeManager;
+  defaultPolicy?: ConversationPolicy;
+  defaultSettings?: ConversationSettings;
+  getSystemSettings?: () => SystemSettings;
 }
 
 function buildProtocolInput(message: SendConversationMessageInput): unknown[] {
@@ -77,6 +84,9 @@ export class ConversationService {
   private readonly activeTurnIds = new Set<string>();
   private readonly timeoutMs: number;
   private readonly approvalTimeoutMs: number | null;
+  private readonly defaultPolicy: ConversationPolicy | undefined;
+  private readonly defaultSettings: ConversationSettings | undefined;
+  private readonly getSystemSettings: (() => SystemSettings) | undefined;
 
   constructor(private readonly options: ConversationServiceOptions) {
     this.conversations = new ConversationRepository(options.db);
@@ -86,6 +96,9 @@ export class ConversationService {
     this.approvals = new ConversationApprovalRepository(options.db);
     this.clarifications = new ConversationClarificationRepository(options.db);
     this.eventsBus = options.eventBus ?? new EventBus();
+    this.defaultPolicy = options.defaultPolicy;
+    this.defaultSettings = options.defaultSettings;
+    this.getSystemSettings = options.getSystemSettings;
     this.timeoutMs =
       options.timeoutMs ??
       Number(process.env.BUGFIX_HARNESS_CONVERSATION_TIMEOUT_MS ?? 600_000);
@@ -99,6 +112,7 @@ export class ConversationService {
       options.runtimeManager ??
       new ConversationRuntimeManager({
         codexBin: options.codexBin,
+        getCodexBin: options.getCodexBin,
         onThreadStarted: (conversationId, threadId) => {
           this.conversations.updateThreadId(conversationId, threadId);
         },
@@ -113,11 +127,29 @@ export class ConversationService {
     }
 
     const title = parsed.title.trim() || "";
+    const systemSettings = this.getSystemSettings?.();
     const conversation = this.conversations.create({
       projectId: parsed.projectId,
       title,
-      policy: parsed.policy,
-      settings: parsed.settings,
+      policy: {
+        ...(systemSettings?.security.conversationDefaults ??
+          this.defaultPolicy ??
+          parsed.policy),
+        ...parsed.policy,
+      },
+      settings: {
+        ...{
+          model:
+            systemSettings?.models.conversationModel ??
+            this.defaultSettings?.model,
+          reasoningEffort:
+            systemSettings?.models.conversationReasoningEffort ??
+            this.defaultSettings?.reasoningEffort,
+          baseInstructions: this.defaultSettings?.baseInstructions,
+          developerInstructions: this.defaultSettings?.developerInstructions,
+        },
+        ...parsed.settings,
+      },
     });
     this.publishEvent(conversation.id, "raw", "conversation.created", {
       conversation,
@@ -252,7 +284,9 @@ export class ConversationService {
       });
 
       const completion = await runtime.waitForTurnCompletion({
-        idleTimeoutMs: this.timeoutMs,
+        idleTimeoutMs:
+          this.getSystemSettings?.().agent.conversationIdleTimeoutMs ??
+          this.timeoutMs,
       });
       const turn = this.turns.getByCodexTurnId(conversationId, codexTurnId);
       if (turn) {
@@ -552,7 +586,7 @@ export class ConversationService {
       this.eventsBus,
       conversation.policy,
       new DynamicToolRegistry(projectRoot),
-      this.approvalTimeoutMs,
+      this.getSystemSettings?.().agent.approvalTtlMs ?? this.approvalTimeoutMs,
     );
     this.activeCoordinators.set(conversationId, coordinator);
     runtime.onServerRequest = (message) =>

@@ -6,6 +6,7 @@ import {
 
 export interface ConversationRuntimeOptions {
   codexBin?: string;
+  getCodexBin?: () => string;
   onServerRequest?: (message: RuntimeMessage) => Promise<unknown | undefined>;
   onThreadStarted?: (conversationId: string, threadId: string) => void;
 }
@@ -30,7 +31,10 @@ export class ConversationRuntimeManager {
     }
 
     const runtime = new AppServerRuntime({
-      codexBin: this.options.codexBin ?? process.env.CODEX_BIN,
+      codexBin:
+        this.options.getCodexBin?.() ??
+        this.options.codexBin ??
+        process.env.CODEX_BIN,
       cwd: projectRoot,
       approvalMode: "decline",
       turnIdleTimeoutMs: Number(

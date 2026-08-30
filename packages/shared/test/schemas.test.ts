@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createBugfixTaskInputSchema,
+  createProjectFromRemoteInputSchema,
   createProjectInputSchema,
   createTaskContract,
   normalizeValidationCommands,
@@ -30,6 +31,24 @@ describe("shared schemas", () => {
         name: "bad",
         repoPath: "relative/path",
       }),
+    ).toThrow();
+  });
+
+  it("accepts a remote project input with defaults", () => {
+    const parsed = createProjectFromRemoteInputSchema.parse({
+      remoteUrl: "https://github.com/acme/web-service",
+    });
+    expect(parsed.instructionSources).toEqual([]);
+    expect(parsed.validationCommands).toEqual([]);
+    expect(parsed.allowedPaths).toEqual([]);
+    expect(parsed.forbiddenPaths).toEqual([]);
+    expect(parsed.username).toBeUndefined();
+    expect(parsed.passwordOrToken).toBeUndefined();
+  });
+
+  it("rejects an empty remote url", () => {
+    expect(() =>
+      createProjectFromRemoteInputSchema.parse({ remoteUrl: "" }),
     ).toThrow();
   });
 

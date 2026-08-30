@@ -9,6 +9,7 @@ const db = openDatabase(config.databasePath);
 const service = new BugfixService({
   db,
   worktreeRoot: config.worktreeRoot,
+  reposRoot: config.reposRoot,
   eventBus: new EventBus(),
   codexBin: config.codexBin,
   analysisTimeoutMs: config.analysisTimeoutMs,

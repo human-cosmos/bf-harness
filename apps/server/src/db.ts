@@ -345,6 +345,25 @@ export function migrate(db: AppDatabase): void {
         ALTER TABLE agent_events ADD COLUMN message TEXT NOT NULL DEFAULT '';
       `,
     },
+    {
+      version: 8,
+      sql: `
+        ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT 'local';
+        ALTER TABLE projects ADD COLUMN remote_url TEXT;
+        ALTER TABLE projects ADD COLUMN remote_host TEXT;
+        ALTER TABLE projects ADD COLUMN default_branch TEXT;
+      `,
+    },
+    {
+      version: 9,
+      sql: `
+        CREATE TABLE system_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      `,
+    },
   ];
 
   for (const migration of migrations) {
