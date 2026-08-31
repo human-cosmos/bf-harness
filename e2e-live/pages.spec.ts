@@ -236,7 +236,6 @@ test("E2E-14 系统设置页", async ({ page }) => {
   await page.goto("/settings");
   await expect(page.getByRole("heading", { name: "系统设置" })).toBeVisible();
   await expect(page.getByText("提示词模板")).toBeVisible();
-  await expect(page.getByText("存储与保留")).toBeVisible();
   await expect(page.getByText("运行时路径与 Codex 二进制")).toBeVisible();
   await expect(page.getByRole("button", { name: "保存全部系统设置" })).toBeVisible();
 });

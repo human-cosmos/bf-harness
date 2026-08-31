@@ -472,7 +472,6 @@ export function SettingsPage() {
   const models = settings.models;
   const security = settings.security;
   const projectDefaults = settings.projectDefaults;
-  const storage = settings.storage;
   const remote = settings.remote;
 
   return (
@@ -727,51 +726,6 @@ export function SettingsPage() {
               }))
             }
           />
-        </div>
-      </Card>
-
-      <Card
-        title="模型连接信息"
-        description="只读信息。这里展示当前配置默认生效的模型；base_url 与 api_key 由 Codex CLI 自身的配置和认证管理，本页面不读取、不回显明文凭证。"
-      >
-        <div className="facts">
-          <div className="fact">
-            <span className="fact-label">Bugfix 默认模型</span>
-            <span className="fact-value">
-              {models.bugfixModel?.trim() || "由 Codex 自动选择"}
-            </span>
-          </div>
-          <div className="fact">
-            <span className="fact-label">Bugfix 默认推理强度</span>
-            <span className="fact-value">
-              {models.bugfixReasoningEffort?.trim() || "由 Codex 默认选择"}
-            </span>
-          </div>
-          <div className="fact">
-            <span className="fact-label">自由对话默认模型</span>
-            <span className="fact-value">
-              {models.conversationModel?.trim() || "由 Codex 自动选择"}
-            </span>
-          </div>
-          <div className="fact">
-            <span className="fact-label">自由对话默认推理强度</span>
-            <span className="fact-value">
-              {models.conversationReasoningEffort?.trim() ||
-                "由 Codex 默认选择"}
-            </span>
-          </div>
-          <div className="fact">
-            <span className="fact-label">base_url / api_key</span>
-            <span className="fact-value">
-              由 Codex CLI 配置管理，未回显明文
-            </span>
-          </div>
-          <div className="fact">
-            <span className="fact-label">变更生效范围</span>
-            <span className="fact-value">
-              仅对之后新启动的任务和对话生效，正在运行中的任务不受影响
-            </span>
-          </div>
         </div>
       </Card>
 
@@ -1119,100 +1073,6 @@ export function SettingsPage() {
             }))
           }
         />
-      </Card>
-
-      <Card
-        title="存储与保留"
-        description="控制磁盘告警、日志保留和自动修复轮数。"
-        actions={
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={busy}
-            onClick={saveSystemSettings}
-          >
-            {busy ? "保存中..." : "保存本组"}
-          </button>
-        }
-      >
-        <div className="settings-grid">
-          <NumberField
-            label="数据总量告警阈值"
-            unit="bytes"
-            min={1}
-            value={storage.totalDataLimitBytes}
-            onChange={(value) =>
-              updateSettings((current) => ({
-                ...current,
-                storage: {
-                  ...current.storage,
-                  totalDataLimitBytes: value ?? 5 * 1024 * 1024 * 1024,
-                },
-              }))
-            }
-          />
-          <NumberField
-            label="磁盘告警比例"
-            unit="0-1"
-            min={0}
-            step={0.05}
-            value={storage.diskWarnRatio}
-            onChange={(value) =>
-              updateSettings((current) => ({
-                ...current,
-                storage: {
-                  ...current.storage,
-                  diskWarnRatio: value ?? 0.8,
-                },
-              }))
-            }
-          />
-          <NumberField
-            label="单任务日志上限"
-            unit="bytes"
-            min={1}
-            value={storage.taskLogLimitBytes}
-            onChange={(value) =>
-              updateSettings((current) => ({
-                ...current,
-                storage: {
-                  ...current.storage,
-                  taskLogLimitBytes: value ?? 100 * 1024 * 1024,
-                },
-              }))
-            }
-          />
-          <NumberField
-            label="单任务事件保留数"
-            unit="条"
-            min={1}
-            value={storage.maxEventsPerTask}
-            onChange={(value) =>
-              updateSettings((current) => ({
-                ...current,
-                storage: {
-                  ...current.storage,
-                  maxEventsPerTask: value ?? 10_000,
-                },
-              }))
-            }
-          />
-          <NumberField
-            label="自动修复轮数"
-            unit="轮"
-            min={0}
-            value={storage.autoRepairRounds}
-            onChange={(value) =>
-              updateSettings((current) => ({
-                ...current,
-                storage: {
-                  ...current.storage,
-                  autoRepairRounds: value ?? 2,
-                },
-              }))
-            }
-          />
-        </div>
       </Card>
 
       <Card

@@ -36,7 +36,7 @@ const runtimeInfo: CodexRuntimeInfo = {
 };
 
 describe("SettingsPage", () => {
-  it("shows the detected Codex version and read-only model connection info", async () => {
+  it("shows the detected Codex version", async () => {
     vi.mocked(api.getSystemSettings).mockResolvedValue({
       settings: DEFAULT_SYSTEM_SETTINGS,
       defaults: DEFAULT_SYSTEM_SETTINGS,
@@ -58,13 +58,5 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
 
     expect(await screen.findByText("codex 0.1.0")).toBeTruthy();
-    expect(
-      screen.getByText("由 Codex CLI 配置管理，未回显明文"),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(
-        "仅对之后新启动的任务和对话生效，正在运行中的任务不受影响",
-      ),
-    ).toBeTruthy();
   });
 });
