@@ -153,4 +153,50 @@ describe("DiffService", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("reports a staged deletion as deleted (D )", async () => {
+    const root = mkdtempSync(join(tmpdir(), "bugfix-diff-"));
+    const repo = join(root, "repo");
+    try {
+      git(["init", repo]);
+      git(["-C", repo, "config", "user.email", "spike@example.com"]);
+      git(["-C", repo, "config", "user.name", "Spike"]);
+      writeFileSync(join(repo, "deleted.txt"), "one\n");
+      git(["-C", repo, "add", "deleted.txt"]);
+      git(["-C", repo, "commit", "-m", "baseline"]);
+      git(["-C", repo, "rm", "deleted.txt"]);
+
+      const result = await new DiffService().generate(repo);
+      const file = result.files.find((item) => item.path === "deleted.txt");
+
+      expect(file?.status).toBe("deleted");
+      expect(result.stats.deleted).toBe(1);
+      expect(result.stats.modified).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unstaged deletion as deleted ( D)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "bugfix-diff-"));
+    const repo = join(root, "repo");
+    try {
+      git(["init", repo]);
+      git(["-C", repo, "config", "user.email", "spike@example.com"]);
+      git(["-C", repo, "config", "user.name", "Spike"]);
+      writeFileSync(join(repo, "deleted.txt"), "one\n");
+      git(["-C", repo, "add", "deleted.txt"]);
+      git(["-C", repo, "commit", "-m", "baseline"]);
+      rmSync(join(repo, "deleted.txt"));
+
+      const result = await new DiffService().generate(repo);
+      const file = result.files.find((item) => item.path === "deleted.txt");
+
+      expect(file?.status).toBe("deleted");
+      expect(result.stats.deleted).toBe(1);
+      expect(result.stats.modified).toBe(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

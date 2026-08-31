@@ -28,7 +28,7 @@ function statusFromPorcelain(code: string): FileChange["status"] {
   if (code[0] === "A") {
     return "added";
   }
-  if (code === "D" || code === " D") {
+  if (code.includes("D")) {
     return "deleted";
   }
   if (code.includes("R")) {
