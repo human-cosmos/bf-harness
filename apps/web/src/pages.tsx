@@ -476,6 +476,54 @@ export function Loading({ children }: { children?: ReactNode }) {
   );
 }
 
+function ListPagination({
+  page,
+  totalPages,
+  total,
+  itemLabel,
+  ariaLabel,
+  disabled = false,
+  onPrevious,
+  onNext,
+}: {
+  page: number;
+  totalPages: number;
+  total: number;
+  itemLabel: string;
+  ariaLabel: string;
+  disabled?: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  if (total <= 0) return null;
+
+  return (
+    <nav className="conversation-pagination" aria-label={ariaLabel}>
+      <span className="conversation-pagination-summary">
+        第 {page} / {totalPages} 页 · 共 {total} {itemLabel}
+      </span>
+      <div className="conversation-pagination-actions">
+        <button
+          type="button"
+          className="btn"
+          disabled={page <= 1 || disabled}
+          onClick={onPrevious}
+        >
+          上一页
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={page >= totalPages || disabled}
+          onClick={onNext}
+        >
+          下一页
+        </button>
+      </div>
+    </nav>
+  );
+}
+
 type DiffRow =
   | { type: "meta"; content: string }
   | { type: "hunk"; content: string }
@@ -998,15 +1046,30 @@ export function Layout() {
 
 export function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState("");
   const { ask, confirmDialog } = useConfirmDialog();
+  const PROJECT_PAGE_SIZE = 10;
+  const totalPages = Math.max(1, Math.ceil(projects.length / PROJECT_PAGE_SIZE));
+  const pageForRender = Math.min(page, totalPages);
+  const visibleProjects = projects.slice(
+    (pageForRender - 1) * PROJECT_PAGE_SIZE,
+    pageForRender * PROJECT_PAGE_SIZE,
+  );
 
   async function load() {
     setLoading(true);
     try {
-      setProjects(await api.listProjectSummaries());
+      const nextProjects = await api.listProjectSummaries();
+      setProjects(nextProjects);
+      setPage((current) =>
+        Math.min(
+          current,
+          Math.max(1, Math.ceil(nextProjects.length / PROJECT_PAGE_SIZE)),
+        ),
+      );
       setError("");
     } catch (err) {
       setError((err as Error).message);
@@ -1060,45 +1123,61 @@ export function ProjectsPage() {
           <p className="muted">暂无项目，请先添加一个本地 Git 仓库。</p>
         </div>
       ) : (
-        <div className="card">
-          <div className="list">
-            {projects.map((project) => (
-              <div key={project.id} className="list-item">
-                <div className="list-item-main">
-                  <Link to={`/projects/${project.id}`} className="list-item-title">
-                    {project.name}
-                  </Link>
-                  <span className="list-item-meta">{project.repoPath}</span>
-                  <span className="list-item-meta">
-                    {project.taskCount} 个任务
-                    {project.pendingTaskCount
-                      ? ` · ${project.pendingTaskCount} 个待处理`
-                      : ""}
-                  </span>
+        <>
+          <div className="card">
+            <div className="list">
+              {visibleProjects.map((project) => (
+                <div key={project.id} className="list-item">
+                  <div className="list-item-main">
+                    <Link to={`/projects/${project.id}`} className="list-item-title">
+                      {project.name}
+                    </Link>
+                    <span className="list-item-meta">{project.repoPath}</span>
+                    <span className="list-item-meta">
+                      {project.taskCount} 个任务
+                      {project.pendingTaskCount
+                        ? ` · ${project.pendingTaskCount} 个待处理`
+                        : ""}
+                    </span>
+                  </div>
+                  <div className="actions">
+                    <Link to={`/projects/${project.id}`} className="btn">
+                      查看项目
+                    </Link>
+                    <Link
+                      to={`/tasks/new?projectId=${project.id}`}
+                      className="btn"
+                    >
+                      新建任务
+                    </Link>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      disabled={deletingId === project.id}
+                      onClick={() => deleteProject(project)}
+                    >
+                      {deletingId === project.id ? "删除中..." : "删除"}
+                    </button>
+                  </div>
                 </div>
-                <div className="actions">
-                  <Link to={`/projects/${project.id}`} className="btn">
-                    查看项目
-                  </Link>
-                  <Link
-                    to={`/tasks/new?projectId=${project.id}`}
-                    className="btn"
-                  >
-                    新建任务
-                  </Link>
-                  <button
-                    type="button"
-                    className="btn-danger"
-                    disabled={deletingId === project.id}
-                    onClick={() => deleteProject(project)}
-                  >
-                    {deletingId === project.id ? "删除中..." : "删除"}
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+          <ListPagination
+            page={pageForRender}
+            totalPages={totalPages}
+            total={projects.length}
+            itemLabel="个项目"
+            ariaLabel="项目分页"
+            disabled={loading}
+            onPrevious={() =>
+              setPage((current) => Math.max(1, current - 1))
+            }
+            onNext={() =>
+              setPage((current) => Math.min(totalPages, current + 1))
+            }
+          />
+        </>
       )}
     </section>
   );
@@ -1722,8 +1801,10 @@ export function ProjectPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const TASK_PAGE_SIZE = 10;
 
   useEffect(() => {
     let cancelled = false;
@@ -1754,6 +1835,10 @@ export function ProjectPage() {
     return () => {
       cancelled = true;
     };
+  }, [id]);
+
+  useEffect(() => {
+    setPage(1);
   }, [id]);
 
   const filteredTasks = useMemo(() => {
@@ -1812,6 +1897,13 @@ export function ProjectPage() {
     [attentions, tasks],
   );
 
+  const totalPages = Math.max(1, Math.ceil(filteredTasks.length / TASK_PAGE_SIZE));
+  const pageForRender = Math.min(page, totalPages);
+  const visibleTasks = filteredTasks.slice(
+    (pageForRender - 1) * TASK_PAGE_SIZE,
+    pageForRender * TASK_PAGE_SIZE,
+  );
+
   return (
     <section>
       <PageBackLink to="/" label="返回项目列表" />
@@ -1838,28 +1930,40 @@ export function ProjectPage() {
           <button
             type="button"
             className={filter === "all" ? "active" : ""}
-            onClick={() => setFilter("all")}
+            onClick={() => {
+              setFilter("all");
+              setPage(1);
+            }}
           >
             全部
           </button>
           <button
             type="button"
             className={filter === "pending" ? "active" : ""}
-            onClick={() => setFilter("pending")}
+            onClick={() => {
+              setFilter("pending");
+              setPage(1);
+            }}
           >
             待处理 {pendingCount > 0 ? `(${pendingCount})` : ""}
           </button>
           <button
             type="button"
             className={filter === "active" ? "active" : ""}
-            onClick={() => setFilter("active")}
+            onClick={() => {
+              setFilter("active");
+              setPage(1);
+            }}
           >
             进行中
           </button>
           <button
             type="button"
             className={filter === "done" ? "active" : ""}
-            onClick={() => setFilter("done")}
+            onClick={() => {
+              setFilter("done");
+              setPage(1);
+            }}
           >
             已结束
           </button>
@@ -1868,7 +1972,10 @@ export function ProjectPage() {
           搜索任务
           <input
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
             placeholder="按标题、ID 或状态搜索"
           />
         </label>
@@ -1880,37 +1987,53 @@ export function ProjectPage() {
           <p className="muted">{query ? "没有匹配的任务。" : "暂无任务。"}</p>
         </div>
       ) : (
-        <div className="card">
-          <div className="list">
-            {filteredTasks.map((task) => (
-              <div key={task.id} className="list-item">
-                <div className="list-item-main">
-                  <Link to={`/tasks/${task.id}`} className="list-item-title">
-                    {task.title}
-                  </Link>
-                  <span className="list-item-meta" title={task.id}>
-                    创建于 {formatDate(task.createdAt)} · {task.id.slice(0, 8)}
-                  </span>
+        <>
+          <div className="card">
+            <div className="list">
+              {visibleTasks.map((task) => (
+                <div key={task.id} className="list-item">
+                  <div className="list-item-main">
+                    <Link to={`/tasks/${task.id}`} className="list-item-title">
+                      {task.title}
+                    </Link>
+                    <span className="list-item-meta" title={task.id}>
+                      创建于 {formatDate(task.createdAt)} · {task.id.slice(0, 8)}
+                    </span>
+                  </div>
+                  <div className="list-item-actions">
+                    <StatusBadge status={task.status} />
+                    {attentions[task.id] &&
+                    (attentions[task.id].clarification ||
+                      attentions[task.id].planApproval?.status === "PENDING" ||
+                      attentions[task.id].pendingApprovals > 0 ||
+                      attentions[task.id].validation.failed +
+                        attentions[task.id].validation.timeout >
+                        0) ? (
+                      <Badge tone="warning">待处理</Badge>
+                    ) : null}
+                    <Link to={`/tasks/${task.id}`} className="btn">
+                      查看
+                    </Link>
+                  </div>
                 </div>
-                <div className="list-item-actions">
-                  <StatusBadge status={task.status} />
-                  {attentions[task.id] &&
-                  (attentions[task.id].clarification ||
-                    attentions[task.id].planApproval?.status === "PENDING" ||
-                    attentions[task.id].pendingApprovals > 0 ||
-                    attentions[task.id].validation.failed +
-                      attentions[task.id].validation.timeout >
-                      0) ? (
-                    <Badge tone="warning">待处理</Badge>
-                  ) : null}
-                  <Link to={`/tasks/${task.id}`} className="btn">
-                    查看
-                  </Link>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+          <ListPagination
+            page={pageForRender}
+            totalPages={totalPages}
+            total={filteredTasks.length}
+            itemLabel="个任务"
+            ariaLabel="任务分页"
+            disabled={loading}
+            onPrevious={() =>
+              setPage((current) => Math.max(1, current - 1))
+            }
+            onNext={() =>
+              setPage((current) => Math.min(totalPages, current + 1))
+            }
+          />
+        </>
       )}
     </section>
   );
