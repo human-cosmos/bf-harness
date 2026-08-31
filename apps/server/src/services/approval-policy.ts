@@ -69,6 +69,101 @@ function commandTokens(command: string): string[] {
   return command.trim().split(/\s+/).filter(Boolean);
 }
 
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+]);
+
+const GH_GLAB_OPTIONS_WITH_VALUE = new Set([
+  "-R",
+  "--repo",
+  "--config",
+  "--config-file",
+  "--hostname",
+]);
+
+function optionName(token: string): string | undefined {
+  const lower = token.toLowerCase();
+  if (lower === "--") {
+    return undefined;
+  }
+  const equalsIndex = lower.indexOf("=");
+  return equalsIndex > 0 ? lower.slice(0, equalsIndex) : lower;
+}
+
+function isOptionWithValue(
+  token: string,
+  optionsWithValue: Set<string>,
+): boolean {
+  return optionsWithValue.has(optionName(token) ?? "");
+}
+
+function positionalTokensAfterOptions(
+  tokens: string[],
+  optionsWithValue: Set<string>,
+): string[] {
+  const positional: string[] = [];
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const lower = token.toLowerCase();
+
+    if (lower === "--") {
+      positional.push(
+        ...tokens.slice(index + 1).map((value) => value.toLowerCase()),
+      );
+      break;
+    }
+
+    if (isOptionWithValue(token, optionsWithValue)) {
+      if (!token.includes("=")) {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (lower.startsWith("-") && lower !== "-") {
+      continue;
+    }
+
+    positional.push(lower);
+  }
+
+  return positional;
+}
+
+function isPermanentlyForbiddenVcsCommand(
+  tokens: string[],
+  first: string,
+): boolean {
+  if (first === "git") {
+    const [subcommand] = positionalTokensAfterOptions(
+      tokens,
+      GIT_OPTIONS_WITH_VALUE,
+    );
+    return subcommand === "commit" || subcommand === "push";
+  }
+
+  if (first === "gh" || first === "glab") {
+    const [subcommand, action] = positionalTokensAfterOptions(
+      tokens,
+      GH_GLAB_OPTIONS_WITH_VALUE,
+    );
+
+    if (first === "gh") {
+      return subcommand === "pr" && action === "create";
+    }
+
+    return subcommand === "mr" && action === "create";
+  }
+
+  return false;
+}
+
 function sameTokens(left: string[], right: string[]): boolean {
   return (
     left.length === right.length &&
@@ -134,10 +229,7 @@ function classifyCommand(
   const first = tokens[0]?.toLowerCase() ?? "";
 
   if (
-    joined.startsWith("git commit") ||
-    joined.startsWith("git push") ||
-    joined.startsWith("glab mr create") ||
-    joined.startsWith("gh pr create") ||
+    isPermanentlyForbiddenVcsCommand(tokens, first) ||
     joined.includes("merge-request") ||
     joined.includes("create pr")
   ) {

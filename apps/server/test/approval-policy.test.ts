@@ -86,6 +86,135 @@ describe("approval policy", () => {
     ).toBe("deny");
   });
 
+  it("denies git commit and push when global options are present", () => {
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git -C /tmp/repo push origin main",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git --no-pager commit -m fix",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git --git-dir=/tmp/repo push origin main",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git --git-dir /tmp/repo commit -m fix",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git -c user.name=test commit -m fix",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+  });
+
+  it("denies gh and glab merge-request creation when options are present", () => {
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "gh --repo owner/repo pr create",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "gh pr create --repo owner/repo",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "glab --config-file /tmp/glab.cfg mr create",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("deny");
+  });
+
+  it("does not deny safe or unrelated commands with global options", () => {
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "git --no-pager status",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("autoAllow");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: `git -C ${worktree} log`,
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).toBe("autoAllow");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "gh pr view",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).not.toBe("deny");
+    expect(
+      classifyApprovalRequest(
+        {
+          kind: "command",
+          command: "glab mr list",
+          cwd: worktree,
+        },
+        context,
+      ).level,
+    ).not.toBe("deny");
+  });
+
   it("auto-allows writes inside an allowed path even when unplanned", () => {
     const ctx = makePolicyContext({
       worktreeRoot: worktree,
