@@ -1,4 +1,4 @@
-import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -197,5 +197,98 @@ describe("ConversationInteractionCoordinator", () => {
     });
     expect(result.success).toBe(false);
     expect(result.contentItems[0].text).toContain("escapes");
+  });
+});
+
+describe("DynamicToolRegistry", () => {
+  it("reads files using a namespaced short tool name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    writeFileSync(join(root, "hello.txt"), "hello");
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      namespace: "fs",
+      tool: "readFile",
+      arguments: { path: "hello.txt" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.contentItems[0].text).toBe("hello");
+  });
+
+  it("writes files using a namespaced short tool name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      namespace: "fs",
+      tool: "writeFile",
+      arguments: { path: "nested/hello.txt", content: "hello" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(root, "nested", "hello.txt"), "utf8")).toBe("hello");
+  });
+
+  it("creates directories using a namespaced short tool name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      namespace: "fs",
+      tool: "createDirectory",
+      arguments: { path: "nested/created" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(existsSync(join(root, "nested", "created"))).toBe(true);
+  });
+
+  it("reads directories using a namespaced short tool name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    writeFileSync(join(root, "hello.txt"), "hello");
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      namespace: "fs",
+      tool: "readDirectory",
+      arguments: { path: "." },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.contentItems[0].text).toContain("hello.txt");
+  });
+
+  it("gets metadata using a namespaced short tool name", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    writeFileSync(join(root, "hello.txt"), "hello");
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      namespace: "fs",
+      tool: "getMetadata",
+      arguments: { path: "hello.txt" },
+    });
+
+    expect(result.success).toBe(true);
+    const metadata = JSON.parse(result.contentItems[0].text) as {
+      exists: boolean;
+      isFile: boolean;
+    };
+    expect(metadata.exists).toBe(true);
+    expect(metadata.isFile).toBe(true);
+  });
+
+  it("keeps fully-qualified fs tool names working", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dynamic-tool-namespace-"));
+    const registry = new DynamicToolRegistry(root);
+
+    const result = await registry.call({
+      tool: "fs/writeFile",
+      arguments: { path: "flat.txt", content: "flat" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(readFileSync(join(root, "flat.txt"), "utf8")).toBe("flat");
   });
 });

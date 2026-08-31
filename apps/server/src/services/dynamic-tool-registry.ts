@@ -107,13 +107,19 @@ export class DynamicToolRegistry {
     const args = asRecord(input.arguments);
 
     try {
-      if (input.namespace === "fs" || input.tool === "fs/readFile") {
+      const tool = input.namespace
+        ? input.tool.startsWith(`${input.namespace}/`)
+          ? input.tool
+          : `${input.namespace}/${input.tool}`
+        : input.tool;
+
+      if (tool === "fs/readFile") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
         assertRealPathWithinRoot(this.projectRoot, path);
         return textResult(readFileSync(path, "utf8"), true);
       }
 
-      if (input.tool === "fs/writeFile") {
+      if (tool === "fs/writeFile") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
         assertRealPathWithinRoot(this.projectRoot, path);
         const content =
@@ -127,14 +133,14 @@ export class DynamicToolRegistry {
         return textResult(`wrote ${relative(this.projectRoot, path)}`, true);
       }
 
-      if (input.tool === "fs/createDirectory") {
+      if (tool === "fs/createDirectory") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
         assertRealPathWithinRoot(this.projectRoot, path);
         mkdirSync(path, { recursive: true });
         return textResult(`created ${relative(this.projectRoot, path)}`, true);
       }
 
-      if (input.tool === "fs/readDirectory") {
+      if (tool === "fs/readDirectory") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
         assertRealPathWithinRoot(this.projectRoot, path);
         const entries = readdirSync(path, { withFileTypes: true }).map(
@@ -151,7 +157,7 @@ export class DynamicToolRegistry {
         return textResult(JSON.stringify(entries, null, 2), true);
       }
 
-      if (input.tool === "fs/getMetadata") {
+      if (tool === "fs/getMetadata") {
         const path = resolveWithinRoot(this.projectRoot, args.path);
         assertRealPathWithinRoot(this.projectRoot, path);
         const stat = statSync(path);
@@ -172,7 +178,7 @@ export class DynamicToolRegistry {
         );
       }
 
-      if (input.tool === "fuzzyFileSearch") {
+      if (tool === "fuzzyFileSearch") {
         const query = String(args.query ?? "").toLowerCase();
         const files = walkFiles(this.projectRoot, 100);
         const matches = query
@@ -182,7 +188,7 @@ export class DynamicToolRegistry {
       }
 
       return textResult(
-        `Dynamic tool not implemented: ${input.namespace ? `${input.namespace}/` : ""}${input.tool}`,
+        `Dynamic tool not implemented: ${tool}`,
         false,
       );
     } catch (error) {
