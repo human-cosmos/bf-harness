@@ -124,6 +124,7 @@
   --on-accent: #ffffff;
   --on-success: #ffffff;
   --on-warning: #ffffff;
+  --on-danger: #ffffff;
 
   /* Code & diff */
   --code-bg: #edefe7;
@@ -189,6 +190,7 @@
   --on-accent: #121419;
   --on-success: #121419;
   --on-warning: #121419;
+  --on-danger: #121419;
 
   --code-bg: #171a20;
   --code-text: #cdd2d9;
@@ -1479,15 +1481,80 @@ select {
 /* Workflow timeline                                                  */
 /* ------------------------------------------------------------------ */
 
+.workflow-block {
+  margin-bottom: var(--space-5);
+  animation: rise-in 0.45s ease-out both;
+}
+
+.workflow-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.workflow-block-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.workflow-live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.workflow-live-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.workflow-live-neutral {
+  color: var(--text-2);
+}
+
+.workflow-live-active {
+  color: var(--accent);
+}
+
+.workflow-live-warning {
+  color: var(--warning);
+}
+
+.workflow-live-danger {
+  color: var(--danger);
+}
+
+.workflow-live-success {
+  color: var(--success);
+}
+
+.workflow-live-active .workflow-live-dot {
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
+.workflow-live-warning .workflow-live-dot {
+  animation: live-ping 1.8s ease-out infinite;
+}
+
 .workflow-stepper {
   position: relative;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-2);
-  margin-bottom: var(--space-5);
   padding-top: var(--space-1);
   --stepper-progress: 0;
-  animation: rise-in 0.45s ease-out both;
 }
 
 .workflow-stepper::before {
@@ -1532,6 +1599,7 @@ select {
   flex: none;
   display: grid;
   place-items: center;
+  position: relative;
   border-radius: 50%;
   background: var(--surface);
   border: 2px solid var(--border-strong);
@@ -1539,6 +1607,11 @@ select {
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 700;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .workflow-step-label {
@@ -1547,35 +1620,122 @@ select {
   white-space: nowrap;
 }
 
-.workflow-step.is-current .workflow-step-dot {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  box-shadow: 0 0 0 4px var(--accent-soft);
-  animation: step-pulse 2s ease-in-out infinite;
+.workflow-step[data-state="todo"] {
+  opacity: 0.55;
 }
 
-.workflow-step.is-current .workflow-step-label {
-  color: var(--accent);
-}
-
-.workflow-step.is-completed .workflow-step-dot {
+.workflow-step[data-state="done"] .workflow-step-dot {
   border-color: var(--success);
   background: var(--success);
   color: var(--on-success);
 }
 
-.workflow-step.is-locked {
-  opacity: 0.55;
+.workflow-step[data-state="ready"] .workflow-step-dot {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
 }
 
-@keyframes step-pulse {
+.workflow-step[data-state="ready"] .workflow-step-label {
+  color: var(--accent);
+}
+
+.workflow-step[data-state="working"] .workflow-step-dot {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.workflow-step[data-state="working"] .workflow-step-dot::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+
+.workflow-step[data-state="working"] .workflow-step-label {
+  color: var(--accent);
+}
+
+.workflow-step[data-state="awaiting"] .workflow-step-dot {
+  border-color: var(--warning);
+  background: var(--warning);
+  color: var(--on-warning);
+}
+
+.workflow-step[data-state="awaiting"] .workflow-step-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  animation: awaiting-ping 1.8s ease-out infinite;
+}
+
+.workflow-step[data-state="awaiting"] .workflow-step-label {
+  color: var(--warning);
+}
+
+.workflow-step[data-state="failed"] .workflow-step-dot {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: var(--on-danger);
+}
+
+.workflow-step[data-state="failed"] .workflow-step-label {
+  color: var(--danger);
+}
+
+.workflow-stepper.is-working::after {
+  animation:
+    spine-draw-x 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+    spine-breathe 1.6s ease-in-out 0.7s infinite;
+}
+
+@keyframes live-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 4px var(--accent-soft);
+    box-shadow: 0 0 0 0 var(--accent-soft);
   }
   50% {
-    box-shadow: 0 0 0 7px var(--accent-soft);
+    box-shadow: 0 0 0 5px var(--accent-soft);
+  }
+}
+
+@keyframes live-ping {
+  0% {
+    box-shadow: 0 0 0 0 var(--warning-soft);
+    opacity: 0.9;
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--warning) 0%, transparent);
+    opacity: 0;
+  }
+}
+
+@keyframes awaiting-ping {
+  0% {
+    box-shadow: 0 0 0 0 var(--warning);
+    opacity: 0.7;
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--warning) 0%, transparent);
+    opacity: 0;
+  }
+}
+
+@keyframes spine-breathe {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.2);
   }
 }
 
@@ -2890,9 +3050,5 @@ select {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
-  }
-
-  .workflow-step.is-current .workflow-step-dot {
-    animation: none;
   }
 }

@@ -15,6 +15,7 @@ export interface CodexRuntimeCandidate {
   path: string;
   source: "explicit" | "env" | "fallback" | "local-build" | "path";
   available: boolean;
+  version?: string;
   reason?: string;
 }
 
@@ -23,24 +24,40 @@ export interface CodexRuntimeInfo {
   codexBin: string | null;
   source: CodexRuntimeCandidate["source"] | null;
   available: boolean;
+  version: string | null;
   warning?: string;
   candidates: CodexRuntimeCandidate[];
 }
 
-function isExecutableFile(path: string): boolean {
+interface ExecutableInspection {
+  available: boolean;
+  version?: string;
+}
+
+function inspectExecutable(path: string): ExecutableInspection {
   try {
-    if (!existsSync(path)) return false;
-    if (!statSync(path).isFile()) return false;
+    if (!existsSync(path)) {
+      return { available: false };
+    }
+    if (!statSync(path).isFile()) {
+      return { available: false };
+    }
     const result = spawnSync(path, ["--version"], {
       encoding: "utf8",
       timeout: 5_000,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    if (result.error) return false;
-    return result.status === 0 || result.stdout.trim().length > 0;
+    if (result.error) {
+      return { available: false };
+    }
+    const stdout = result.stdout?.trim();
+    const stderr = result.stderr?.trim();
+    const version = stdout || stderr || undefined;
+    const available = result.status === 0;
+    return { available, version };
   } catch {
-    return false;
+    return { available: false };
   }
 }
 
@@ -103,12 +120,13 @@ export class CodexRuntimeService {
       const normalized = candidate.path.trim();
       if (!normalized || seen.has(normalized)) continue;
       seen.add(normalized);
-      const available = isExecutableFile(normalized);
+      const inspection = inspectExecutable(normalized);
       inspected.push({
         path: normalized,
         source: candidate.source,
-        available,
-        reason: available
+        available: inspection.available,
+        version: inspection.version,
+        reason: inspection.available
           ? undefined
           : "文件不存在、不可执行，或无法作为 Codex 运行。",
       });
@@ -120,6 +138,7 @@ export class CodexRuntimeService {
       codexBin: firstAvailable?.path ?? null,
       source: firstAvailable?.source ?? null,
       available: Boolean(firstAvailable),
+      version: firstAvailable?.version ?? null,
       warning: firstAvailable
         ? undefined
         : "未检测到可用的 CODEX_BIN 运行环境，请手动指定可执行文件。",
@@ -132,7 +151,7 @@ export class CodexRuntimeService {
     if (!normalized) {
       throw new Error("CODEX_BIN path is required");
     }
-    if (!isExecutableFile(normalized)) {
+    if (!inspectExecutable(normalized).available) {
       throw new Error("所选文件不存在、不可执行，或无法作为 Codex 运行。");
     }
 

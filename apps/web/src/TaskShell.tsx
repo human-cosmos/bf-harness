@@ -2,10 +2,9 @@ import type { CSSProperties, ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import type { WorkflowState } from "./api.js";
 import {
+  effectiveStatusForState,
   nextActionForState,
-  STATUS_META,
-  stepIndexForStatus,
-  WORKFLOW_STEPS,
+  stepperForState,
 } from "./workflow-model.js";
 import { TaskRail } from "./TaskRail.js";
 
@@ -17,11 +16,6 @@ function Badge({
   children: ReactNode;
 }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
-}
-
-function StatusBadge({ status }: { status: keyof typeof STATUS_META }) {
-  const meta = STATUS_META[status] ?? { label: status, tone: "neutral" as const };
-  return <Badge tone={meta.tone}>{meta.label}</Badge>;
 }
 
 function AttentionPanel({ state }: { state: WorkflowState }) {
@@ -114,17 +108,15 @@ export function TaskShell({
     );
   }
 
-  const stepIndex = stepIndexForStatus(state.task.status);
-  const stepperProgress =
-    WORKFLOW_STEPS.length > 1
-      ? stepIndex / (WORKFLOW_STEPS.length - 1)
-      : 0;
+  const stepper = stepperForState(state);
+  const statusMeta = effectiveStatusForState(state);
   const nextAction = nextActionForState(state);
   const isTaskDetail = location.pathname === `/tasks/${state.task.id}`;
   const isCurrentActionPage =
     nextAction.key !== "none" && location.pathname === nextAction.href;
   const runningJob = state.jobs.find((job) => job.status === "running");
   const latestFailedJob = state.jobs.find((job) => job.status === "failed");
+  const isWorking = stepper.steps.some((step) => step.state === "working");
 
   return (
     <section>
@@ -147,7 +139,7 @@ export function TaskShell({
           <h1>{title}</h1>
         </div>
         <div className="page-actions">
-          <StatusBadge status={state.task.status} />
+          <Badge tone={statusMeta.tone}>{statusMeta.label}</Badge>
           {actions}
         </div>
       </header>
@@ -164,33 +156,41 @@ export function TaskShell({
         )}
       </div>
 
-      <div
-        className="workflow-stepper"
-        aria-label="Bugfix 工作流步骤"
-        style={{ "--stepper-progress": stepperProgress } as CSSProperties}
-      >
-        {WORKFLOW_STEPS.map((step, index) => {
-          const current = index === stepIndex;
-          const completed = stepIndex >= 0 && index < stepIndex;
-          const reachable = stepIndex >= 0 && index <= stepIndex;
-          const classes = [
-            "workflow-step",
-            current ? "is-current" : "",
-            completed ? "is-completed" : "",
-            reachable ? "is-reachable" : "is-locked",
-          ]
-            .filter(Boolean)
-            .join(" ");
-
-          return (
-            <div key={step.key} className={classes}>
+      <div className="workflow-block">
+        <div className="workflow-block-head">
+          <span className="workflow-block-eyebrow">任务进度</span>
+          <span
+            className={`workflow-live workflow-live-${stepper.tone}`}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="workflow-live-dot" aria-hidden="true" />
+            {stepper.caption}
+          </span>
+        </div>
+        <div
+          className={`workflow-stepper${isWorking ? " is-working" : ""}`}
+          aria-label="Bugfix 工作流步骤"
+          style={{ "--stepper-progress": stepper.progress } as CSSProperties}
+        >
+          {stepper.steps.map((step, index) => (
+            <div
+              key={step.key}
+              className="workflow-step"
+              data-state={step.state}
+              aria-current={step.current ? "step" : undefined}
+            >
               <div className="workflow-step-dot" aria-hidden="true">
-                {completed ? "✓" : index + 1}
+                {step.state === "done"
+                  ? "✓"
+                  : step.state === "failed"
+                    ? "!"
+                    : index + 1}
               </div>
               <span className="workflow-step-label">{step.label}</span>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
       <div className="task-layout">

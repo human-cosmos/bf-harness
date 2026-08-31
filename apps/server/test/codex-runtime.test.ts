@@ -31,6 +31,7 @@ describe("CodexRuntimeService", () => {
       expect(info.codexBin).toBe(path);
       expect(info.source).toBe("fallback");
       expect(info.warning).toBeUndefined();
+      expect(info.version).toBe("fake-codex 1.0");
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });
@@ -54,6 +55,7 @@ describe("CodexRuntimeService", () => {
       expect(info.available).toBe(true);
       expect(info.source).toBe("explicit");
       expect(info.codexBin).toBe(path);
+      expect(info.version).toBe("fake-codex 1.0");
       expect(settings.get().runtime.codexBin).toBe(path);
     } finally {
       db.close();
@@ -76,6 +78,60 @@ describe("CodexRuntimeService", () => {
       expect(info.warning).toContain("未检测到");
     } finally {
       db.close();
+    }
+  });
+
+  it("does not treat stderr-only output with a non-zero exit as usable", () => {
+    const db = openDatabase(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "bugfix-codex-runtime-"));
+    const path = join(dir, "fake-codex-stderr");
+    writeFileSync(
+      path,
+      "#!/bin/sh\nprintf 'fake-codex 9.9\\n' >&2\nexit 1\n",
+      { mode: 0o755 },
+    );
+    chmodSync(path, 0o755);
+    try {
+      const runtime = new CodexRuntimeService(
+        new SystemSettingsService(db),
+        path,
+        "",
+        undefined,
+      );
+      const fallback = runtime.detect().candidates.find(
+        (candidate) => candidate.path === path,
+      );
+      expect(fallback?.available).toBe(false);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat stdout-only output with a non-zero exit as usable", () => {
+    const db = openDatabase(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "bugfix-codex-runtime-"));
+    const path = join(dir, "fake-codex-stdout");
+    writeFileSync(
+      path,
+      "#!/bin/sh\nprintf 'fake-codex 9.9\\n'\nexit 1\n",
+      { mode: 0o755 },
+    );
+    chmodSync(path, 0o755);
+    try {
+      const runtime = new CodexRuntimeService(
+        new SystemSettingsService(db),
+        path,
+        "",
+        undefined,
+      );
+      const fallback = runtime.detect().candidates.find(
+        (candidate) => candidate.path === path,
+      );
+      expect(fallback?.available).toBe(false);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
@@ -114,6 +170,7 @@ describe("codex runtime endpoints", () => {
         codexBin: path,
         source: "explicit",
         available: true,
+        version: "fake-codex 1.0",
       });
     } finally {
       await app.close();

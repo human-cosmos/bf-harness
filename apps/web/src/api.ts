@@ -291,11 +291,13 @@ export interface CodexRuntimeInfo {
   codexBin: string | null;
   source: "explicit" | "env" | "fallback" | "local-build" | "path" | null;
   available: boolean;
+  version: string | null;
   warning?: string;
   candidates: Array<{
     path: string;
     source: "explicit" | "env" | "fallback" | "local-build" | "path";
     available: boolean;
+    version?: string;
     reason?: string;
   }>;
 }

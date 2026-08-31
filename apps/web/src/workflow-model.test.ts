@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { WorkflowState } from "./api.js";
 import {
   currentStepForStatus,
+  effectiveStatusForState,
   nextActionForState,
+  stepperForState,
   WORKFLOW_STEPS,
 } from "./workflow-model.js";
 
@@ -119,5 +121,98 @@ describe("workflow model", () => {
     );
     expect(next.key).toBe("continue-fix");
     expect(next.href).toContain("#validation-action");
+  });
+
+  it("distinguishes working from awaiting and ready on the current step", () => {
+    expect(
+      stepperForState(
+        state({ task: { ...state().task, status: "ANALYZING" } }),
+      ).steps[0].state,
+    ).toBe("working");
+
+    expect(
+      stepperForState(
+        state({ task: { ...state().task, status: "WAITING_FOR_PLAN_APPROVAL" } }),
+      ).steps[1].state,
+    ).toBe("awaiting");
+
+    expect(
+      stepperForState(
+        state({ task: { ...state().task, status: "IMPLEMENTING" } }),
+      ).steps[2].state,
+    ).toBe("ready");
+  });
+
+  it("shows a running implement job as working instead of ready", () => {
+    const next = stepperForState(
+      state({
+        task: { ...state().task, status: "IMPLEMENTING" },
+        jobs: [
+          {
+            id: "job-1",
+            taskId: "task-1",
+            kind: "implement",
+            status: "running",
+            message: "开始实施",
+            startedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    );
+    expect(next.steps[2].state).toBe("working");
+  });
+
+  it("marks an accepted task as fully done", () => {
+    const next = stepperForState(
+      state({ task: { ...state().task, status: "ACCEPTED" } }),
+    );
+    expect(next.steps.every((step) => step.state === "done")).toBe(true);
+    expect(next.progress).toBe(1);
+  });
+
+  it("marks validation as failed when checks failed without a background job", () => {
+    const next = stepperForState(
+      state({
+        task: { ...state().task, status: "FAILED" },
+        attention: {
+          ...state().attention,
+          validation: { ...state().attention.validation, failed: 1 },
+        },
+      }),
+    );
+    expect(next.steps[3].state).toBe("failed");
+  });
+
+  it("clarifies the caption when validation needs a follow-up fix", () => {
+    const next = stepperForState(
+      state({
+        task: { ...state().task, status: "VALIDATING" },
+        attention: {
+          ...state().attention,
+          validation: { ...state().attention.validation, failed: 1 },
+        },
+      }),
+    );
+    expect(next.caption).toBe("检查未通过 · 等待你继续修复");
+  });
+
+  it("overrides the badge while implementation is actually running", () => {
+    const next = effectiveStatusForState(
+      state({
+        task: { ...state().task, status: "IMPLEMENTING" },
+        jobs: [
+          {
+            id: "job-1",
+            taskId: "task-1",
+            kind: "implement",
+            status: "running",
+            message: "开始实施",
+            startedAt: new Date().toISOString(),
+          },
+        ],
+      }),
+    );
+    expect(next.label).toBe("实施中");
+    expect(next.tone).toBe("active");
   });
 });

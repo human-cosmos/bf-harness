@@ -845,16 +845,27 @@ export function ConversationPage() {
 
   async function send() {
     if (!conversationId || !text.trim()) return;
+    const nextText = text;
+    const nextMentions = mentions;
     setBusy(true);
     setError("");
     setMessage("");
+    setText("");
+    setMentions([]);
+    let sent = false;
     try {
-      await api.sendConversationMessage(conversationId, { text, mentions });
-      setText("");
-      setMentions([]);
+      await api.sendConversationMessage(conversationId, {
+        text: nextText,
+        mentions: nextMentions,
+      });
+      sent = true;
       await load();
     } catch (err) {
       setError((err as Error).message);
+      if (!sent) {
+        setText(nextText);
+        setMentions(nextMentions);
+      }
     } finally {
       setBusy(false);
     }

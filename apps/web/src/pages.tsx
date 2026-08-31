@@ -2296,7 +2296,10 @@ export function TaskDetailPage() {
       job.status === "running" &&
       (job.kind === "implement" || job.kind === "continue-fix"),
   );
-  const canImplement = status === "IMPLEMENTING" && !hasRunningImplementation;
+  const canImplement =
+    status === "IMPLEMENTING" &&
+    !hasRunningImplementation &&
+    (state?.attention.pendingApprovals ?? 0) === 0;
   const canCancel = [
     "DRAFT",
     "PREPARING_WORKSPACE",
@@ -2328,7 +2331,13 @@ export function TaskDetailPage() {
       type="button"
       className="btn btn-primary"
       disabled={Boolean(busy)}
-      onClick={() => run(() => api.implement(id!), "开始实施")}
+      onClick={() =>
+        run(
+          () => api.implement(id!),
+          "开始实施",
+          "实施任务已启动，将在后台执行并自动验证。",
+        )
+      }
     >
       {busy === "开始实施" ? "处理中..." : "开始实施"}
     </button>
@@ -2700,7 +2709,7 @@ export function PlanPage() {
               })
             }
           >
-            {busy === "仅批准" ? "提交中..." : "仅批准"}
+            {busy === "仅批准" ? "处理中..." : "仅批准"}
           </button>
           <button
             className="btn-danger"
@@ -2732,7 +2741,10 @@ export function ApprovalsPage() {
   const [message, setMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [showDetails, setShowDetails] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState("");
+  const [busyItem, setBusyItem] = useState<{
+    id: string;
+    decision: "accept" | "decline";
+  } | null>(null);
   const [batchBusy, setBatchBusy] = useState("");
   const [loading, setLoading] = useState(false);
   const { ask, confirmDialog } = useConfirmDialog();
@@ -2780,7 +2792,7 @@ export function ApprovalsPage() {
     decision: "accept" | "decline",
     label: string,
   ) {
-    setBusyId(String(item.id));
+    setBusyItem({ id: String(item.id), decision });
     setActionError("");
     setMessage("");
     try {
@@ -2791,7 +2803,7 @@ export function ApprovalsPage() {
     } catch (err) {
       setActionError((err as Error).message);
     } finally {
-      setBusyId("");
+      setBusyItem(null);
     }
   }
 
@@ -2843,7 +2855,7 @@ export function ApprovalsPage() {
             <button
               type="button"
               className="btn-primary"
-              disabled={Boolean(batchBusy)}
+              disabled={Boolean(batchBusy) || Boolean(busyItem)}
               onClick={() => runBatch("accept", "全部允许")}
             >
               {batchBusy === "accept" ? "处理中..." : "全部允许"}
@@ -2851,7 +2863,7 @@ export function ApprovalsPage() {
             <button
               type="button"
               className="btn-danger"
-              disabled={Boolean(batchBusy)}
+              disabled={Boolean(batchBusy) || Boolean(busyItem)}
               onClick={() => {
                 ask({
                   title: "全部拒绝",
@@ -2926,17 +2938,21 @@ export function ApprovalsPage() {
               <div className="actions">
                 <button
                   className="btn-primary"
-                  disabled={busyId === item.id}
+                  disabled={Boolean(batchBusy) || Boolean(busyItem)}
                   onClick={() => decide(item, "accept", "允许")}
                 >
-                  {busyId === item.id ? "处理中..." : "允许"}
+                  {busyItem?.id === item.id && busyItem.decision === "accept"
+                    ? "处理中..."
+                    : "允许"}
                 </button>
                 <button
                   className="btn-danger"
-                  disabled={busyId === item.id}
+                  disabled={Boolean(batchBusy) || Boolean(busyItem)}
                   onClick={() => decide(item, "decline", "拒绝")}
                 >
-                  {busyId === item.id ? "处理中..." : "拒绝"}
+                  {busyItem?.id === item.id && busyItem.decision === "decline"
+                    ? "处理中..."
+                    : "拒绝"}
                 </button>
               </div>
             )}
@@ -3223,6 +3239,8 @@ export function DiffPage() {
               >
                 {continueBusy ? "正在继续修复..." : "根据失败结果继续修复"}
               </button>
+            ) : state?.task.status === "IMPLEMENTING" ? (
+              <p className="muted">正在继续修复，验证完成后会自动更新结果。</p>
             ) : (
               <p className="muted">任务已受阻，请人工检查失败输出后处理。</p>
             )}
@@ -3327,6 +3345,7 @@ export function ReportPage() {
       setDecisionMessage("已继续实施，自动验证将在后台运行。可稍后查看变更与检查。");
       await refresh();
       setFinalDecision("需要再改并继续实施");
+      navigate(`/tasks/${id}/diff`);
     } catch (err) {
       setActionError((err as Error).message);
     } finally {

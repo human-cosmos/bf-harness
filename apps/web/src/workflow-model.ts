@@ -63,6 +63,220 @@ export function stepIndexForStatus(status: TaskStatus): number {
   return WORKFLOW_STEPS.findIndex((step) => step.key === current);
 }
 
+export type StepVisualState =
+  | "todo"
+  | "done"
+  | "working"
+  | "awaiting"
+  | "ready"
+  | "failed";
+
+export interface StepperStepView {
+  key: StepKey;
+  label: string;
+  state: StepVisualState;
+  current: boolean;
+}
+
+export type StepperTone =
+  | "neutral"
+  | "active"
+  | "warning"
+  | "danger"
+  | "success";
+
+export interface StepperView {
+  steps: StepperStepView[];
+  caption: string;
+  tone: StepperTone;
+  progress: number;
+}
+
+type JobKind = "implement" | "continue-fix" | "validate" | "report";
+
+function runningJobKind(state: WorkflowState): JobKind | null {
+  return (
+    state.jobs.find((job) => job.status === "running")?.kind ?? null
+  );
+}
+
+function failedJobKind(state: WorkflowState): JobKind | null {
+  return (
+    state.jobs.find((job) => job.status === "failed")?.kind ?? null
+  );
+}
+
+function failedStepForState(state: WorkflowState): StepKey {
+  const kind = failedJobKind(state);
+  if (kind === "implement" || kind === "continue-fix") return "implement";
+  if (kind === "validate") return "validate";
+  if (kind === "report") return "accept";
+  const hasFailedValidation =
+    state.attention.validation.failed + state.attention.validation.timeout > 0;
+  if (hasFailedValidation) return "validate";
+  // Prepare/analyze failures are not tracked as background jobs.
+  return "analyze";
+}
+
+function stepProgress(index: number): number {
+  return WORKFLOW_STEPS.length > 1
+    ? index / (WORKFLOW_STEPS.length - 1)
+    : 0;
+}
+
+/**
+ * Derives the visual state of the workflow stepper from the task status,
+ * running/failed jobs, and validation attention. The intent is to make the
+ * machine vs. human distinction explicit: "working" spins, "awaiting" nudges.
+ */
+export function stepperForState(state: WorkflowState): StepperView {
+  const status = state.task.status;
+  const runningKind = runningJobKind(state);
+  const failedValidations =
+    state.attention.validation.failed + state.attention.validation.timeout;
+
+  if (status === "ACCEPTED") {
+    return {
+      steps: WORKFLOW_STEPS.map((step) => ({
+        key: step.key,
+        label: step.label,
+        state: "done",
+        current: false,
+      })),
+      caption: "已验收 · 全部阶段完成",
+      tone: "success",
+      progress: 1,
+    };
+  }
+
+  if (status === "FAILED" || status === "BLOCKED") {
+    const failedKey = failedStepForState(state);
+    const failedIndex = WORKFLOW_STEPS.findIndex(
+      (step) => step.key === failedKey,
+    );
+    return {
+      steps: WORKFLOW_STEPS.map((step, index) => {
+        if (index < failedIndex) {
+          return { key: step.key, label: step.label, state: "done", current: false };
+        }
+        if (index === failedIndex) {
+          return { key: step.key, label: step.label, state: "failed", current: true };
+        }
+        return { key: step.key, label: step.label, state: "todo", current: false };
+      }),
+      caption: status === "BLOCKED" ? "已受阻 · 停在当前阶段" : "已失败 · 停在当前阶段",
+      tone: "danger",
+      progress: stepProgress(failedIndex),
+    };
+  }
+
+  if (status === "CANCELLED" || status === "REJECTED") {
+    const rejected = status === "REJECTED";
+    return {
+      steps: WORKFLOW_STEPS.map((step, index) => {
+        if (rejected && index < WORKFLOW_STEPS.length - 1) {
+          return { key: step.key, label: step.label, state: "done", current: false };
+        }
+        if (rejected && index === WORKFLOW_STEPS.length - 1) {
+          return { key: step.key, label: step.label, state: "failed", current: true };
+        }
+        return { key: step.key, label: step.label, state: "todo", current: false };
+      }),
+      caption: rejected ? "已拒绝 · 未通过验收" : "已取消 · 任务未完成",
+      tone: rejected ? "danger" : "neutral",
+      progress: rejected ? stepProgress(WORKFLOW_STEPS.length - 2) : 0,
+    };
+  }
+
+  const currentIndex = stepIndexForStatus(status);
+  const index = currentIndex >= 0 ? currentIndex : 0;
+
+  let mode: StepVisualState = "ready";
+  if (status === "PREPARING_WORKSPACE" || status === "ANALYZING") {
+    mode = "working";
+  } else if (
+    status === "WAITING_FOR_PLAN_APPROVAL" ||
+    status === "WAITING_FOR_ACCEPTANCE"
+  ) {
+    mode = "awaiting";
+  } else if (status === "IMPLEMENTING") {
+    mode =
+      runningKind === "implement" || runningKind === "continue-fix"
+        ? "working"
+        : "ready";
+  } else if (status === "VALIDATING") {
+    mode =
+      runningKind === "validate" || failedValidations === 0
+        ? "working"
+        : "awaiting";
+  }
+
+  const steps = WORKFLOW_STEPS.map((step, stepIndex) => {
+    if (stepIndex < index) {
+      return { key: step.key, label: step.label, state: "done" as const, current: false };
+    }
+    if (stepIndex > index) {
+      return { key: step.key, label: step.label, state: "todo" as const, current: false };
+    }
+    return { key: step.key, label: step.label, state: mode, current: true };
+  });
+
+  const currentLabel = WORKFLOW_STEPS[index]?.label ?? "";
+  let caption = "待开始";
+  let tone: StepperTone = "neutral";
+
+  if (mode === "working") {
+    caption = `执行中 · ${currentLabel}`;
+    tone = "active";
+  } else if (mode === "awaiting") {
+    caption =
+      status === "VALIDATING"
+        ? `检查未通过 · 等待你继续修复`
+        : `等待你 · ${currentLabel}`;
+    tone = "warning";
+  } else if (mode === "ready") {
+    caption =
+      status === "IMPLEMENTING"
+        ? `待实施 · ${currentLabel}`
+        : `待开始 · ${currentLabel}`;
+    tone = "neutral";
+  }
+
+  return {
+    steps,
+    caption,
+    tone,
+    progress: stepProgress(index),
+  };
+}
+
+export interface EffectiveStatus {
+  label: string;
+  tone: "neutral" | "active" | "success" | "warning" | "danger";
+}
+
+/**
+ * Resolves the human-facing status badge, overriding IMPLEMENTING while an
+ * implement/continue-fix job is actually running so it reads "实施中" instead
+ * of the misleading "待实施".
+ */
+export function effectiveStatusForState(state: WorkflowState): EffectiveStatus {
+  const meta = STATUS_META[state.task.status];
+  const runningKind = runningJobKind(state);
+
+  if (
+    state.task.status === "IMPLEMENTING" &&
+    (runningKind === "implement" || runningKind === "continue-fix")
+  ) {
+    return {
+      label: runningKind === "continue-fix" ? "继续修复中" : "实施中",
+      tone: "active",
+    };
+  }
+
+  return { label: meta.label, tone: meta.tone };
+}
+
 export type NextActionKey =
   | "start-analyze"
   | "submit-clarification"
