@@ -350,6 +350,13 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export interface ConversationPage {
+  items: Conversation[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface ConversationItem {
   id: string;
   conversationId: string;
@@ -633,6 +640,10 @@ export const api = {
     }),
   listConversations: (projectId: string) =>
     request<Conversation[]>(`/api/projects/${projectId}/conversations`),
+  listConversationPage: (projectId: string, page = 1, pageSize = 20) =>
+    request<ConversationPage>(
+      `/api/projects/${projectId}/conversations/page?page=${page}&pageSize=${pageSize}`,
+    ),
   createConversation: (
     projectId: string,
     input: Record<string, unknown>,

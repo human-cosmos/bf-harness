@@ -42,6 +42,7 @@ import {
 import { useHarnessEvents } from "./use-harness-events.js";
 import { useWorkflowState } from "./use-workflow-state.js";
 import { TaskShell } from "./TaskShell.js";
+import { PageBackLink } from "./PageBackLink.js";
 import {
   currentStepForStatus,
   nextActionForState,
@@ -137,14 +138,6 @@ function ListFact({ label, items }: { label: string; items: string[] }) {
         <span className="fact-value">无</span>
       )}
     </div>
-  );
-}
-
-function BackLink({ to, children }: { to: string; children?: ReactNode }) {
-  return (
-    <Link to={to} className="btn back-link">
-      {children ?? "返回上一级"}
-    </Link>
   );
 }
 
@@ -1435,6 +1428,7 @@ export function NewProjectPage() {
 
   return (
     <section>
+      <PageBackLink to="/" label="返回项目列表" />
       <PageHeader kicker="项目" title="添加项目" />
       <form className="form" onSubmit={submit}>
         <div className="card form-card">
@@ -1820,9 +1814,7 @@ export function ProjectPage() {
 
   return (
     <section>
-      <div className="page-context">
-        <BackLink to="/">返回项目列表</BackLink>
-      </div>
+      <PageBackLink to="/" label="返回项目列表" />
       <PageHeader
         kicker={project ? project.name : "项目"}
         title="项目任务"
@@ -1886,13 +1878,6 @@ export function ProjectPage() {
       ) : filteredTasks.length === 0 ? (
         <div className="card empty-state">
           <p className="muted">{query ? "没有匹配的任务。" : "暂无任务。"}</p>
-          {!query && (
-            <div className="actions">
-              <Link to={`/tasks/new?projectId=${id}`} className="btn btn-primary">
-                新建 Bugfix 任务
-              </Link>
-            </div>
-          )}
         </div>
       ) : (
         <div className="card">
@@ -1946,6 +1931,7 @@ export function NewTaskPage() {
   const [relatedFiles, setRelatedFiles] = useState("");
   const [acceptanceCriteria, setAcceptanceCriteria] = useState("");
   const [constraints, setConstraints] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -2000,8 +1986,17 @@ export function NewTaskPage() {
     }
   }
 
+  const selectedProjectId = params.get("projectId") ?? projectId;
+  const backTo = selectedProjectId
+    ? `/projects/${selectedProjectId}`
+    : "/";
+
   return (
     <section>
+      <PageBackLink
+        to={backTo}
+        label={selectedProjectId ? "返回项目任务" : "返回项目列表"}
+      />
       <PageHeader kicker="任务" title="新建 Bugfix 任务" />
       {loading ? (
         <Loading />
@@ -2079,113 +2074,150 @@ export function NewTaskPage() {
                 </label>
               </div>
 
-              <div className="form-section">
-                <div className="form-section-heading">
-                  <div className="form-section-title">
-                    <span className="form-section-tag">行为</span>
-                    <h2>实际与期望</h2>
-                  </div>
-                  <span className="field-hint">清晰的目标能显著提高修复质量</span>
-                </div>
-                <div className="two-column-fields behavior-fields">
-                  <label className="field field-actual">
-                    <span className="field-label">
-                      <span className="diff-sign minus" aria-hidden="true">-</span>
-                      当前行为
-                    </span>
-                    <textarea
-                      value={observedBehavior}
-                      onChange={(event) => setObservedBehavior(event.target.value)}
-                      placeholder="实际发生了什么"
-                    />
-                  </label>
-                  <label className="field field-expected">
-                    <span className="field-label">
-                      <span className="diff-sign plus" aria-hidden="true">+</span>
-                      期望行为
-                    </span>
-                    <textarea
-                      value={expectedBehavior}
-                      onChange={(event) => setExpectedBehavior(event.target.value)}
-                      placeholder="应该发生什么"
-                    />
-                  </label>
-                </div>
-              </div>
+              <div className="advanced-fields">
+                <button
+                  type="button"
+                  className="advanced-toggle"
+                  aria-expanded={advancedOpen}
+                  aria-controls="advanced-fields-body"
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                >
+                  <span className="advanced-toggle-heading">
+                    <span className="form-section-tag">更多信息</span>
+                    <span className="advanced-toggle-title">高级选项（选填）</span>
+                  </span>
+                  <span className="advanced-toggle-action">
+                    <span className="muted">{advancedOpen ? "收起" : "展开"}</span>
+                    <svg
+                      className={`icon advanced-chevron${advancedOpen ? " is-open" : ""}`}
+                      viewBox="0 0 16 16"
+                      width="16"
+                      height="16"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M4 6l4 4 4-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </span>
+                </button>
+                {advancedOpen ? (
+                  <div id="advanced-fields-body" className="advanced-fields-body">
+                    <div className="form-section">
+                      <div className="form-section-heading">
+                        <div className="form-section-title">
+                          <span className="form-section-tag">行为</span>
+                          <h2>实际与期望</h2>
+                        </div>
+                        <span className="field-hint">清晰的目标能显著提高修复质量</span>
+                      </div>
+                      <div className="two-column-fields behavior-fields">
+                        <label className="field field-actual">
+                          <span className="field-label">
+                            <span className="diff-sign minus" aria-hidden="true">-</span>
+                            当前行为
+                          </span>
+                          <textarea
+                            value={observedBehavior}
+                            onChange={(event) => setObservedBehavior(event.target.value)}
+                            placeholder="实际发生了什么"
+                          />
+                        </label>
+                        <label className="field field-expected">
+                          <span className="field-label">
+                            <span className="diff-sign plus" aria-hidden="true">+</span>
+                            期望行为
+                          </span>
+                          <textarea
+                            value={expectedBehavior}
+                            onChange={(event) => setExpectedBehavior(event.target.value)}
+                            placeholder="应该发生什么"
+                          />
+                        </label>
+                      </div>
+                    </div>
 
-              <div className="form-section">
-                <div className="form-section-heading">
-                  <div className="form-section-title">
-                    <span className="form-section-tag">复现</span>
-                    <h2>如何触发</h2>
-                  </div>
-                  <span className="field-hint">尽量补充，可显著提高定位准确率</span>
-                </div>
-                <label className="field">
-                  <span className="field-label">复现步骤</span>
-                  <textarea
-                    value={reproductionSteps}
-                    onChange={(event) => setReproductionSteps(event.target.value)}
-                    placeholder="按步骤描述如何复现，一行一步"
-                  />
-                </label>
-                <label className="field">
-                  <span className="field-label">复现命令</span>
-                  <input
-                    className="mono-input"
-                    value={reproductionCommand}
-                    onChange={(event) => setReproductionCommand(event.target.value)}
-                    placeholder="npm run test path/to/case"
-                  />
-                </label>
-                <div className="two-column-fields">
-                  <label className="field">
-                    <span className="field-label">相关文件</span>
-                    <textarea
-                      className="mono-input"
-                      value={relatedFiles}
-                      onChange={(event) => setRelatedFiles(event.target.value)}
-                      placeholder="每行一个路径，例如 src/app/login.ts"
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="field-label">相关日志</span>
-                    <textarea
-                      className="mono-input"
-                      value={logs}
-                      onChange={(event) => setLogs(event.target.value)}
-                      placeholder="粘贴错误日志、堆栈或关键上下文"
-                    />
-                  </label>
-                </div>
-              </div>
+                    <div className="form-section">
+                      <div className="form-section-heading">
+                        <div className="form-section-title">
+                          <span className="form-section-tag">复现</span>
+                          <h2>如何触发</h2>
+                        </div>
+                        <span className="field-hint">尽量补充，可显著提高定位准确率</span>
+                      </div>
+                      <label className="field">
+                        <span className="field-label">复现步骤</span>
+                        <textarea
+                          value={reproductionSteps}
+                          onChange={(event) => setReproductionSteps(event.target.value)}
+                          placeholder="按步骤描述如何复现，一行一步"
+                        />
+                      </label>
+                      <label className="field">
+                        <span className="field-label">复现命令</span>
+                        <input
+                          className="mono-input"
+                          value={reproductionCommand}
+                          onChange={(event) => setReproductionCommand(event.target.value)}
+                          placeholder="npm run test path/to/case"
+                        />
+                      </label>
+                      <div className="two-column-fields">
+                        <label className="field">
+                          <span className="field-label">相关文件</span>
+                          <textarea
+                            className="mono-input"
+                            value={relatedFiles}
+                            onChange={(event) => setRelatedFiles(event.target.value)}
+                            placeholder="每行一个路径，例如 src/app/login.ts"
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">相关日志</span>
+                          <textarea
+                            className="mono-input"
+                            value={logs}
+                            onChange={(event) => setLogs(event.target.value)}
+                            placeholder="粘贴错误日志、堆栈或关键上下文"
+                          />
+                        </label>
+                      </div>
+                    </div>
 
-              <div className="form-section">
-                <div className="form-section-heading">
-                  <div className="form-section-title">
-                    <span className="form-section-tag">验收</span>
-                    <h2>怎样算修好</h2>
+                    <div className="form-section">
+                      <div className="form-section-heading">
+                        <div className="form-section-title">
+                          <span className="form-section-tag">验收</span>
+                          <h2>怎样算修好</h2>
+                        </div>
+                        <span className="field-hint">决定这次修复怎样算完成</span>
+                      </div>
+                      <div className="two-column-fields">
+                        <label className="field">
+                          <span className="field-label">验收条件</span>
+                          <textarea
+                            value={acceptanceCriteria}
+                            onChange={(event) => setAcceptanceCriteria(event.target.value)}
+                            placeholder="每行一条，例如：提交后 1 秒内返回结果"
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">约束条件</span>
+                          <textarea
+                            value={constraints}
+                            onChange={(event) => setConstraints(event.target.value)}
+                            placeholder="每行一条，例如：不要修改数据库结构"
+                          />
+                        </label>
+                      </div>
+                    </div>
                   </div>
-                  <span className="field-hint">决定这次修复怎样算完成</span>
-                </div>
-                <div className="two-column-fields">
-                  <label className="field">
-                    <span className="field-label">验收条件</span>
-                    <textarea
-                      value={acceptanceCriteria}
-                      onChange={(event) => setAcceptanceCriteria(event.target.value)}
-                      placeholder="每行一条，例如：提交后 1 秒内返回结果"
-                    />
-                  </label>
-                  <label className="field">
-                    <span className="field-label">约束条件</span>
-                    <textarea
-                      value={constraints}
-                      onChange={(event) => setConstraints(event.target.value)}
-                      placeholder="每行一条，例如：不要修改数据库结构"
-                    />
-                  </label>
-                </div>
+                ) : null}
               </div>
             </div>
             <ErrorNotice message={error} />

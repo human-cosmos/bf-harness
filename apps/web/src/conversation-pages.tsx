@@ -2,8 +2,10 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -16,6 +18,7 @@ import {
   type ConversationItem,
 } from "./api.js";
 import { useConversationEvents } from "./use-conversation-events.js";
+import { PageBackLink } from "./PageBackLink.js";
 
 function formatDate(value: string | number | null | undefined): string {
   if (!value) return "—";
@@ -38,6 +41,55 @@ function SuccessNotice({ message }: { message: string }) {
   return (
     <div className="notice notice-success" role="status">
       {message}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  message: ReactNode;
+  confirmLabel: string;
+  busy: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={onCancel}>
+      <div
+        className="dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="conversation-delete-dialog-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="conversation-delete-dialog-title">{title}</h2>
+        <div className="dialog-message">{message}</div>
+        <div className="actions">
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={onCancel}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="btn-danger"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            {busy ? "删除中..." : confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -103,6 +155,26 @@ function conversationDisplayTitle(title: string): string {
   return title.trim() || "新对话";
 }
 
+type ConversationBadgeTone = "neutral" | "active" | "warning" | "danger";
+
+const CONVERSATION_STATUS_META: Record<
+  Conversation["status"],
+  { label: string; tone: ConversationBadgeTone }
+> = {
+  IDLE: { label: "空闲", tone: "neutral" },
+  RUNNING: { label: "进行中", tone: "active" },
+  WAITING_APPROVAL: { label: "待审批", tone: "warning" },
+  WAITING_CLARIFICATION: { label: "待澄清", tone: "warning" },
+  FAILED: { label: "失败", tone: "danger" },
+  ARCHIVED: { label: "已归档", tone: "neutral" },
+};
+
+function conversationStatusMeta(status: Conversation["status"]) {
+  return (
+    CONVERSATION_STATUS_META[status] ?? { label: status, tone: "neutral" as const }
+  );
+}
+
 type ToolbarIconName =
   | "stop"
   | "fork"
@@ -112,7 +184,10 @@ type ToolbarIconName =
   | "terminal"
   | "edit"
   | "paperclip"
-  | "send";
+  | "send"
+  | "trash"
+  | "messages"
+  | "bell";
 
 const toolbarIcons: Record<ToolbarIconName, ReactNode> = {
   stop: (
@@ -178,6 +253,28 @@ const toolbarIcons: Record<ToolbarIconName, ReactNode> = {
     <>
       <path d="m22 2-7 20-4-9-9-4Z" />
       <path d="M22 2 11 13" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </>
+  ),
+  messages: (
+    <>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+    </>
+  ),
+  bell: (
+    <>
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
     </>
   ),
 };
@@ -382,6 +479,93 @@ function ClarificationInline({
   );
 }
 
+export function PendingPanel({
+  approvals,
+  clarification,
+  busy,
+  onDecide,
+  onJumpToClarification,
+  onClose,
+  panelRef,
+}: {
+  approvals: ConversationApproval[];
+  clarification: ConversationClarification | null;
+  busy: boolean;
+  onDecide: (
+    approvalId: string,
+    decision: "accept" | "acceptForSession" | "decline" | "cancel",
+  ) => void;
+  onJumpToClarification: () => void;
+  onClose: () => void;
+  panelRef: RefObject<HTMLDivElement | null>;
+}) {
+  const count = approvals.length + (clarification ? 1 : 0);
+
+  return (
+    <div
+      ref={panelRef}
+      className="pending-panel"
+      role="dialog"
+      aria-label="待处理事项"
+      aria-modal="true"
+      onMouseDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const panel = panelRef.current;
+        if (!panel) return;
+        const focusables = Array.from(
+          panel.querySelectorAll<HTMLElement>(
+            'button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}
+    >
+      <div className="pending-panel-head">
+        <strong>待处理</strong>
+        <span className="badge badge-warning">{count} 项</span>
+        <button type="button" aria-label="关闭" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="pending-panel-body">
+        {clarification ? (
+          <div className="pending-panel-item">
+            <div className="pending-panel-item-title">Codex 需要补充信息</div>
+            <div className="actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={onJumpToClarification}
+              >
+                去补充
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {approvals.map((approval) => (
+          <ApprovalInline
+            key={approval.id}
+            approval={approval}
+            busy={busy}
+            onDecide={(decision) => onDecide(approval.id, decision)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ActivityInspector({ events }: { events: ConversationEvent[] }) {
   return (
     <details className="conversation-tool-block activity-inspector">
@@ -571,6 +755,8 @@ export function QuickCommandPalette({
     { command: "/fork", description: "Fork 当前对话" },
     { command: "/interrupt", description: "中断当前 turn" },
     { command: "/rename", description: "重命名对话" },
+    { command: "/find", description: "定位用户消息" },
+    { command: "/delete", description: "删除当前对话" },
     { command: "/help", description: "显示快捷指令说明" },
   ];
 
@@ -605,10 +791,91 @@ export function QuickCommandPalette({
   );
 }
 
+export interface UserMessageEntry {
+  id: string;
+  groupIndex: number;
+  text: string;
+  createdAt: string;
+  item: ConversationItem;
+}
+
+export function UserMessageIndex({
+  messages,
+  onJump,
+  onClose,
+}: {
+  messages: UserMessageEntry[];
+  onJump: (entry: UserMessageEntry) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const filteredMessages = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return messages;
+    return messages.filter((message) =>
+      message.text.toLocaleLowerCase().includes(needle),
+    );
+  }, [messages, query]);
+
+  return (
+    <div
+      className="user-message-index"
+      role="dialog"
+      aria-label="定位用户消息"
+      aria-modal="true"
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      <div className="user-message-index-head">
+        <strong>定位用户消息</strong>
+        <button type="button" aria-label="关闭" onClick={onClose}>
+          ×
+        </button>
+      </div>
+      <div className="user-message-index-search">
+        <input
+          type="search"
+          aria-label="搜索用户消息"
+          placeholder="搜索用户消息"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </div>
+      <div className="user-message-index-list">
+        {filteredMessages.length === 0 ? (
+          <p className="muted user-message-index-empty">
+            {messages.length === 0 ? "暂无用户消息" : "没有匹配的用户消息"}
+          </p>
+        ) : (
+          filteredMessages.map((message) => (
+            <button
+              key={message.id}
+              type="button"
+              className="user-message-index-item"
+              onClick={() => onJump(message)}
+            >
+              <span className="user-message-index-number">
+                #{message.groupIndex + 1}
+              </span>
+              <span className="user-message-index-text">
+                {message.text.trim() || "(空消息)"}
+              </span>
+              <span className="user-message-index-time">
+                {formatDate(message.createdAt)}
+              </span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function useConversations(projectId?: string) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) {
@@ -642,7 +909,26 @@ function useConversations(projectId?: string) {
     }
   }
 
-  return { conversations, loading, error, refresh, create };
+  async function deleteConversation(id: string): Promise<boolean> {
+    setDeletingId(id);
+    try {
+      await api.deleteConversation(id);
+      await refresh();
+      return true;
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return {
+    conversations,
+    loading,
+    error,
+    deletingId,
+    refresh,
+    create,
+    deleteConversation,
+  };
 }
 
 function ConversationRail({
@@ -652,6 +938,8 @@ function ConversationRail({
   error,
   activeId,
   onCreate,
+  deletingId,
+  onDelete,
 }: {
   projectId: string;
   conversations: Conversation[];
@@ -659,6 +947,8 @@ function ConversationRail({
   error: string;
   activeId?: string;
   onCreate: () => void;
+  deletingId?: string | null;
+  onDelete: (conversation: Conversation) => void;
 }) {
   return (
     <nav className="conversation-rail" aria-label="对话列表">
@@ -677,16 +967,32 @@ function ConversationRail({
       ) : (
         <div className="conversation-rail-list">
           {conversations.map((conversation) => (
-            <Link
+            <div
               key={conversation.id}
-              to={`/projects/${projectId}/chat/${conversation.id}`}
               className={`conversation-rail-item${conversation.id === activeId ? " active" : ""}`}
             >
-              <span className="conversation-rail-title">
-                {conversationDisplayTitle(conversation.title)}
-              </span>
-              <span className="muted mono">{conversation.status}</span>
-            </Link>
+              <Link
+                className="conversation-rail-link"
+                to={`/projects/${projectId}/chat/${conversation.id}`}
+              >
+                <span className="conversation-rail-title">
+                  {conversationDisplayTitle(conversation.title)}
+                </span>
+                <span className="muted mono">
+                  {conversationStatusMeta(conversation.status).label}
+                </span>
+                <span className="muted mono">{formatDate(conversation.updatedAt)}</span>
+              </Link>
+              <button
+                type="button"
+                className="conversation-delete conversation-rail-delete"
+                aria-label={`删除对话 ${conversationDisplayTitle(conversation.title)}`}
+                disabled={deletingId === conversation.id}
+                onClick={() => onDelete(conversation)}
+              >
+                <ToolbarIcon name="trash" />
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -697,22 +1003,82 @@ function ConversationRail({
 export function ConversationListPage() {
   const { id: projectId } = useParams();
   const navigate = useNavigate();
-  const { conversations, loading, error, create } = useConversations(projectId);
+  const [items, setItems] = useState<Conversation[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [deleteMessage, setDeleteMessage] = useState("");
+
+  const PAGE_SIZE = 12;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  async function load(pageNumber: number) {
+    if (!projectId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api.listConversationPage(
+        projectId,
+        pageNumber,
+        PAGE_SIZE,
+      );
+      setItems(result.items);
+      setTotal(result.total);
+      setPage(result.page);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load(page);
+  }, [projectId, page]);
 
   async function createConversation() {
-    const conversation = await create();
-    if (conversation) {
+    if (!projectId) return;
+    try {
+      const conversation = await api.createConversation(projectId, {
+        title: "",
+      });
       navigate(`/projects/${projectId}/chat/${conversation.id}`);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete || !projectId) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    setDeleteMessage("");
+    setDeletingId(pendingDelete.id);
+    try {
+      await api.deleteConversation(pendingDelete.id);
+      setPendingDelete(null);
+      setDeleteMessage("对话已删除");
+      if (items.length === 1 && page > 1) {
+        setPage(page - 1);
+      } else {
+        void load(page);
+      }
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeleteBusy(false);
+      setDeletingId(null);
     }
   }
 
   return (
     <section>
-      <div className="page-context">
-        <Link to={`/projects/${projectId}`} className="btn back-link">
-          返回项目
-        </Link>
-      </div>
+      <PageBackLink to={`/projects/${projectId}`} label="返回项目任务" />
       <div className="page-header">
         <div>
           <p className="page-kicker">项目对话</p>
@@ -725,28 +1091,114 @@ export function ConversationListPage() {
         </div>
       </div>
       <ErrorNotice message={error} />
-      {loading ? (
+      <SuccessNotice message={deleteMessage} />
+      <ErrorNotice message={deleteError} />
+      {loading && items.length === 0 ? (
         <Loading>加载对话中...</Loading>
-      ) : conversations.length === 0 ? (
+      ) : items.length === 0 ? (
         <div className="card empty-state">
           <h2>还没有对话</h2>
           <p className="muted">创建一个对话，开始和 Codex 自由交流。</p>
         </div>
       ) : (
-        <div className="conversation-list">
-          {conversations.map((conversation) => (
-            <Link
-              key={conversation.id}
-              to={`/projects/${projectId}/chat/${conversation.id}`}
-              className="conversation-list-item"
-            >
-              <strong>{conversationDisplayTitle(conversation.title)}</strong>
-              <span className="muted">{conversation.status}</span>
-              <span className="muted">{formatDate(conversation.updatedAt)}</span>
-            </Link>
-          ))}
-        </div>
+        <>
+          <div className="conversation-list">
+            {items.map((conversation) => {
+              const status = conversationStatusMeta(conversation.status);
+              return (
+                <div
+                  key={conversation.id}
+                  className="conversation-list-item"
+                  data-status={conversation.status}
+                >
+                  <Link
+                    className="conversation-list-link"
+                    to={`/projects/${projectId}/chat/${conversation.id}`}
+                  >
+                    <div className="conversation-card-main">
+                      <span className="conversation-card-id">
+                        CONV-{conversation.id.slice(0, 8)}
+                      </span>
+                      <h2 className="conversation-card-title">
+                        {conversationDisplayTitle(conversation.title)}
+                      </h2>
+                    </div>
+                    <div className="conversation-card-meta">
+                      <span className={`badge badge-${status.tone}`}>
+                        {status.label}
+                      </span>
+                      <span className="conversation-card-time">
+                        {formatDate(conversation.updatedAt)}
+                      </span>
+                    </div>
+                  </Link>
+                  <button
+                    type="button"
+                    className="conversation-delete"
+                    aria-label={`删除对话 ${conversationDisplayTitle(conversation.title)}`}
+                    disabled={deletingId === conversation.id}
+                    onClick={() => {
+                      setDeleteError("");
+                      setDeleteMessage("");
+                      setPendingDelete(conversation);
+                    }}
+                  >
+                    <ToolbarIcon name="trash" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          {total > 0 ? (
+            <nav className="conversation-pagination" aria-label="对话分页">
+              <span className="conversation-pagination-summary">
+                第 {page} / {totalPages} 页 · 共 {total} 条对话
+              </span>
+              <div className="conversation-pagination-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={page <= 1 || loading}
+                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={page >= totalPages || loading}
+                  onClick={() =>
+                    setPage((current) => Math.min(totalPages, current + 1))
+                  }
+                >
+                  下一页
+                </button>
+              </div>
+            </nav>
+          ) : null}
+        </>
       )}
+      {pendingDelete ? (
+        <ConfirmDialog
+          title="删除对话"
+          message={
+            <>
+              确定删除“{conversationDisplayTitle(pendingDelete.title)}”吗？相关消息、审批、澄清、事件记录都会被一并删除，且无法恢复。
+              {pendingDelete.status === "RUNNING" ||
+              pendingDelete.status === "WAITING_APPROVAL" ||
+              pendingDelete.status === "WAITING_CLARIFICATION"
+                ? " 当前对话仍在进行中，删除会先中断执行。"
+                : ""}
+            </>
+          }
+          confirmLabel="删除对话"
+          busy={deleteBusy}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            if (!deleteBusy) setPendingDelete(null);
+          }}
+        />
+      ) : null}
     </section>
   );
 }
@@ -768,20 +1220,55 @@ export function ConversationPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [showPolicy, setShowPolicy] = useState(false);
-  const [showActivity, setShowActivity] = useState(false);
   const [showFilePicker, setShowFilePicker] = useState(false);
   const [showCommands, setShowCommands] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [showMessageIndex, setShowMessageIndex] = useState(false);
+  const [showPendingPanel, setShowPendingPanel] = useState(false);
+  const [visibleGroupCount, setVisibleGroupCount] = useState(10);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<
+    string | null
+  >(null);
+  const [pendingJumpId, setPendingJumpId] = useState<string | null>(null);
+  const pendingButtonRef = useRef<HTMLButtonElement | null>(null);
+  const pendingPanelRef = useRef<HTMLDivElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const websocket = useConversationEvents(conversationId);
   const {
     conversations,
     loading: conversationsLoading,
     error: conversationsError,
+    deletingId,
     refresh: refreshList,
     create,
+    deleteConversation,
   } = useConversations(projectId);
+
+  const timelineGroups = useMemo(
+    () => groupTimelineItems(dedupeTimelineItems(items)),
+    [items],
+  );
+  const userMessages = useMemo<UserMessageEntry[]>(
+    () =>
+      timelineGroups.flatMap((group, groupIndex) => {
+        if (!group.user) return [];
+        return [
+          {
+            id: group.user.id,
+            groupIndex,
+            text: textFromItem(group.user),
+            createdAt: group.user.createdAt,
+            item: group.user,
+          },
+        ];
+      }),
+    [timelineGroups],
+  );
 
   async function createAndOpen() {
     const next = await create();
@@ -842,6 +1329,96 @@ export function ConversationPage() {
     () => approvals.filter((approval) => !approval.decision),
     [approvals],
   );
+  const pendingCount = pendingApprovals.length + (clarification ? 1 : 0);
+
+  useEffect(() => {
+    if (pendingApprovals.length === 0 && !clarification) {
+      setShowPendingPanel(false);
+    }
+  }, [pendingApprovals, clarification]);
+
+  useEffect(() => {
+    if (showPendingPanel) {
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
+      pendingPanelRef.current?.querySelector<HTMLElement>("button")?.focus();
+    } else if (previousFocusRef.current) {
+      previousFocusRef.current.focus();
+      previousFocusRef.current = null;
+    }
+  }, [showPendingPanel]);
+
+  useEffect(() => {
+    if (!showPendingPanel) return;
+    function handleMouseDown(event: MouseEvent) {
+      const panel = pendingPanelRef.current;
+      const button = pendingButtonRef.current;
+      if (
+        panel &&
+        !panel.contains(event.target as Node) &&
+        button &&
+        !button.contains(event.target as Node)
+      ) {
+        setShowPendingPanel(false);
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [showPendingPanel]);
+
+  function jumpToUserMessage(entry: UserMessageEntry) {
+    const totalGroups = timelineGroups.length;
+    setVisibleGroupCount((current) =>
+      Math.max(current, totalGroups - entry.groupIndex),
+    );
+    setPendingJumpId(entry.id);
+    setShowMessageIndex(false);
+  }
+
+  function jumpToClarification() {
+    setShowPendingPanel(false);
+    requestAnimationFrame(() => {
+      document
+        .getElementById("conversation-clarification")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        setShowPendingPanel(false);
+        setShowMessageIndex((current) => !current);
+        return;
+      }
+      if (event.key === "Escape") {
+        if (showPendingPanel) setShowPendingPanel(false);
+        if (showMessageIndex) setShowMessageIndex(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showMessageIndex, showPendingPanel]);
+
+  useEffect(() => {
+    if (!pendingJumpId) return;
+
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(`user-message-${pendingJumpId}`);
+      target?.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMessageId(pendingJumpId);
+      setPendingJumpId(null);
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [pendingJumpId, items, visibleGroupCount]);
+
+  useEffect(() => {
+    if (!highlightedMessageId) return;
+    const timer = setTimeout(() => setHighlightedMessageId(null), 1600);
+    return () => clearTimeout(timer);
+  }, [highlightedMessageId]);
 
   async function send() {
     if (!conversationId || !text.trim()) return;
@@ -966,6 +1543,26 @@ export function ConversationPage() {
     }
   }
 
+  async function confirmDelete() {
+    if (!pendingDelete || !projectId) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await deleteConversation(pendingDelete.id);
+      const wasActive = pendingDelete.id === conversationId;
+      setPendingDelete(null);
+      if (wasActive) {
+        navigate(`/projects/${projectId}/chat`);
+      } else {
+        setMessage("对话已删除");
+      }
+    } catch (err) {
+      setDeleteError((err as Error).message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   async function runQuickCommand(command: string) {
     if (command === "/policy") {
       setShowPolicy(true);
@@ -1000,9 +1597,18 @@ export function ConversationPage() {
       setRenameValue(conversation?.title ?? "");
       return;
     }
+    if (command === "/find") {
+      setShowMessageIndex(true);
+      return;
+    }
+    if (command === "/delete") {
+      setDeleteError("");
+      setPendingDelete(conversation);
+      return;
+    }
     if (command === "/help") {
       setMessage(
-        "/model 查看模型 · /policy 策略 · /compact 压缩 · /fork Fork · /interrupt 中断 · /rename 重命名",
+        "/model 查看模型 · /policy 策略 · /compact 压缩 · /fork Fork · /interrupt 中断 · /rename 重命名 · /find 定位消息 · /delete 删除",
       );
     }
   }
@@ -1010,6 +1616,7 @@ export function ConversationPage() {
   if (!conversation) {
     return (
       <section>
+        <PageBackLink to={`/projects/${projectId}/chat`} label="返回对话列表" />
         <ErrorNotice message={error} />
         <Loading>加载对话中...</Loading>
       </section>
@@ -1018,6 +1625,7 @@ export function ConversationPage() {
 
   return (
     <section className="conversation-page">
+      <PageBackLink to={`/projects/${projectId}/chat`} label="返回对话列表" />
       <div className="conversation-layout">
         <ConversationRail
           projectId={projectId!}
@@ -1026,6 +1634,11 @@ export function ConversationPage() {
           error={conversationsError}
           activeId={conversationId}
           onCreate={createAndOpen}
+          deletingId={deletingId}
+          onDelete={(conversationToDelete) => {
+            setDeleteError("");
+            setPendingDelete(conversationToDelete);
+          }}
         />
         <div className="conversation-body">
       <div className="page-header conversation-page-header">
@@ -1040,69 +1653,70 @@ export function ConversationPage() {
             </span>
             <span className="badge badge-neutral">{conversation.status}</span>
           </div>
-          <div className="conversation-toolbar">
-            <button
-              type="button"
-              aria-label="重命名"
-              data-tooltip="重命名"
-              onClick={() => {
-                setRenaming(true);
-                setRenameValue(conversation.title);
-              }}
-            >
-              <ToolbarIcon name="edit" />
-            </button>
-            <button
-              type="button"
-              aria-label="中断"
-              data-tooltip="中断"
-              disabled={busy}
-              onClick={interrupt}
-            >
-              <ToolbarIcon name="stop" />
-            </button>
-            <button
-              type="button"
-              aria-label="Fork"
-              data-tooltip="Fork"
-              disabled={busy}
-              onClick={fork}
-            >
-              <ToolbarIcon name="fork" />
-            </button>
-            <button
-              type="button"
-              aria-label="压缩"
-              data-tooltip="压缩"
-              disabled={busy}
-              onClick={compact}
-            >
-              <ToolbarIcon name="compress" />
-            </button>
-            <button
-              type="button"
-              aria-label="策略"
-              data-tooltip="策略"
-              onClick={() => setShowPolicy((current) => !current)}
-            >
-              <ToolbarIcon name="shield" />
-            </button>
-            <button
-              type="button"
-              aria-label="日志"
-              data-tooltip="日志"
-              onClick={() => setShowActivity((current) => !current)}
-            >
-              <ToolbarIcon name="list" />
-            </button>
-            <button
-              type="button"
-              aria-label="快捷指令"
-              data-tooltip="快捷指令"
-              onClick={() => setShowCommands((current) => !current)}
-            >
-              <ToolbarIcon name="terminal" />
-            </button>
+          <div
+            className="conversation-toolbar"
+            role="toolbar"
+            aria-label="对话操作"
+          >
+            <div className="conversation-toolbar-group">
+              <button
+                type="button"
+                aria-label="中断"
+                data-tooltip="中断"
+                disabled={busy}
+                onClick={interrupt}
+              >
+                <ToolbarIcon name="stop" />
+              </button>
+              <button
+                type="button"
+                aria-label="Fork"
+                data-tooltip="Fork"
+                disabled={busy}
+                onClick={fork}
+              >
+                <ToolbarIcon name="fork" />
+              </button>
+              <button
+                type="button"
+                aria-label="压缩"
+                data-tooltip="压缩"
+                disabled={busy}
+                onClick={compact}
+              >
+                <ToolbarIcon name="compress" />
+              </button>
+            </div>
+            <span className="conversation-toolbar-separator" aria-hidden="true" />
+            <div className="conversation-toolbar-group">
+              <button
+                type="button"
+                aria-label="重命名"
+                data-tooltip="重命名"
+                onClick={() => {
+                  setRenaming(true);
+                  setRenameValue(conversation.title);
+                }}
+              >
+                <ToolbarIcon name="edit" />
+              </button>
+              <button
+                type="button"
+                aria-label="策略"
+                data-tooltip="策略"
+                onClick={() => setShowPolicy((current) => !current)}
+              >
+                <ToolbarIcon name="shield" />
+              </button>
+              <button
+                type="button"
+                aria-label="快捷指令"
+                data-tooltip="快捷指令"
+                onClick={() => setShowCommands((current) => !current)}
+              >
+                <ToolbarIcon name="terminal" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1154,14 +1768,17 @@ export function ConversationPage() {
       ) : null}
 
       <ErrorNotice message={error} />
+      <ErrorNotice message={deleteError} />
       <SuccessNotice message={message} />
 
       {clarification ? (
-        <ClarificationInline
-          clarification={clarification}
-          onAnswer={answerClarification}
-          busy={busy}
-        />
+        <div id="conversation-clarification">
+          <ClarificationInline
+            clarification={clarification}
+            onAnswer={answerClarification}
+            busy={busy}
+          />
+        </div>
       ) : null}
 
       {pendingApprovals.map((approval) => (
@@ -1173,9 +1790,13 @@ export function ConversationPage() {
         />
       ))}
 
-      <MessageTimeline key={conversationId} items={items} />
-
-      {showActivity ? <ActivityInspector events={events} /> : null}
+      <MessageTimeline
+        key={conversationId}
+        items={items}
+        visibleGroupCount={visibleGroupCount}
+        onVisibleGroupCountChange={setVisibleGroupCount}
+        highlightedMessageId={highlightedMessageId}
+      />
 
       <div className="conversation-composer-area">
         {showFilePicker ? (
@@ -1208,6 +1829,24 @@ export function ConversationPage() {
             ))}
           </div>
         ) : null}
+        {showMessageIndex ? (
+          <UserMessageIndex
+            messages={userMessages}
+            onJump={jumpToUserMessage}
+            onClose={() => setShowMessageIndex(false)}
+          />
+        ) : null}
+        {showPendingPanel && pendingCount > 0 ? (
+          <PendingPanel
+            approvals={pendingApprovals}
+            clarification={clarification}
+            busy={busy}
+            onDecide={decideApproval}
+            onJumpToClarification={jumpToClarification}
+            onClose={() => setShowPendingPanel(false)}
+            panelRef={pendingPanelRef}
+          />
+        ) : null}
         <div className="conversation-composer">
           <textarea
             aria-label="对话输入"
@@ -1222,16 +1861,58 @@ export function ConversationPage() {
             }}
           />
           <div className="conversation-composer-actions">
-            <button
-              type="button"
-              className={`composer-action composer-action-attach${showFilePicker ? " is-active" : ""}`}
-              aria-label="引用文件"
-              title="引用文件"
-              aria-pressed={showFilePicker}
-              onClick={() => setShowFilePicker((current) => !current)}
-            >
-              <ToolbarIcon name="paperclip" />
-            </button>
+            <div className="composer-action-group">
+              <button
+                type="button"
+                className={`composer-action composer-action-history${showMessageIndex ? " is-active" : ""}`}
+                aria-label="定位用户消息"
+                title="定位用户消息 (Cmd/Ctrl+J)"
+                aria-pressed={showMessageIndex}
+                onClick={() => {
+                  setShowPendingPanel(false);
+                  setShowMessageIndex((current) => !current);
+                }}
+              >
+                <ToolbarIcon name="messages" />
+                {userMessages.length > 0 ? (
+                  <span className="composer-action-count">
+                    {userMessages.length}
+                  </span>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                className={`composer-action composer-action-attach${showFilePicker ? " is-active" : ""}`}
+                aria-label="引用文件"
+                title="引用文件"
+                aria-pressed={showFilePicker}
+                onClick={() => setShowFilePicker((current) => !current)}
+              >
+                <ToolbarIcon name="paperclip" />
+              </button>
+              {pendingCount > 0 ? (
+                <button
+                  ref={pendingButtonRef}
+                  type="button"
+                  className={`composer-action composer-action-pending${showPendingPanel ? " is-active" : ""}`}
+                  aria-label={`待处理 ${pendingCount} 项`}
+                  title={`待处理 ${pendingCount} 项`}
+                  aria-pressed={showPendingPanel}
+                  onClick={() => {
+                    setShowMessageIndex(false);
+                    setShowPendingPanel((current) => !current);
+                  }}
+                >
+                  <ToolbarIcon name="bell" />
+                  <span
+                    className="composer-action-count composer-action-count-pending"
+                    aria-live="polite"
+                  >
+                    {pendingCount}
+                  </span>
+                </button>
+              ) : null}
+            </div>
             <button
               className="composer-action composer-action-send"
               type="button"
@@ -1245,6 +1926,27 @@ export function ConversationPage() {
           </div>
         </div>
       </div>
+      {pendingDelete ? (
+        <ConfirmDialog
+          title="删除对话"
+          message={
+            <>
+              确定删除“{conversationDisplayTitle(pendingDelete.title)}”吗？相关消息、审批、澄清、事件记录都会被一并删除，且无法恢复。
+              {pendingDelete.status === "RUNNING" ||
+              pendingDelete.status === "WAITING_APPROVAL" ||
+              pendingDelete.status === "WAITING_CLARIFICATION"
+                ? " 当前对话仍在进行中，删除会先中断执行。"
+                : ""}
+            </>
+          }
+          confirmLabel="删除对话"
+          busy={deleteBusy}
+          onConfirm={confirmDelete}
+          onCancel={() => {
+            if (!deleteBusy) setPendingDelete(null);
+          }}
+        />
+      ) : null}
         </div>
       </div>
     </section>
@@ -1292,7 +1994,13 @@ function groupTimelineItems(items: ConversationItem[]): TimelineGroup[] {
   return groups;
 }
 
-function ConversationTurnGroup({ group }: { group: TimelineGroup }) {
+function ConversationTurnGroup({
+  group,
+  highlightedMessageId,
+}: {
+  group: TimelineGroup;
+  highlightedMessageId?: string | null;
+}) {
   const primary = group.items.filter(
     (item) => !COLLAPSED_TURN_ITEM_TYPES.has(item.itemType),
   );
@@ -1302,7 +2010,12 @@ function ConversationTurnGroup({ group }: { group: TimelineGroup }) {
 
   return (
     <div className="conversation-turn">
-      {group.user ? <ConversationItemBlock item={group.user} /> : null}
+      {group.user ? (
+        <ConversationItemBlock
+          item={group.user}
+          highlighted={highlightedMessageId === group.user.id}
+        />
+      ) : null}
       {primary.map((item) => (
         <ConversationItemBlock key={item.id} item={item} />
       ))}
@@ -1320,8 +2033,27 @@ function ConversationTurnGroup({ group }: { group: TimelineGroup }) {
   );
 }
 
-export function MessageTimeline({ items }: { items: ConversationItem[] }) {
-  const [visibleGroupCount, setVisibleGroupCount] = useState(10);
+export function MessageTimeline({
+  items,
+  visibleGroupCount: controlledVisibleGroupCount,
+  onVisibleGroupCountChange,
+  highlightedMessageId,
+}: {
+  items: ConversationItem[];
+  visibleGroupCount?: number;
+  onVisibleGroupCountChange?: (count: number) => void;
+  highlightedMessageId?: string | null;
+}) {
+  const [internalVisibleGroupCount, setInternalVisibleGroupCount] = useState(10);
+  const visibleGroupCount =
+    controlledVisibleGroupCount ?? internalVisibleGroupCount;
+  const updateVisibleGroupCount = (count: number) => {
+    if (onVisibleGroupCountChange) {
+      onVisibleGroupCountChange(count);
+    } else {
+      setInternalVisibleGroupCount(count);
+    }
+  };
   const groups = useMemo(
     () => groupTimelineItems(dedupeTimelineItems(items)),
     [items],
@@ -1347,13 +2079,17 @@ export function MessageTimeline({ items }: { items: ConversationItem[] }) {
         <button
           type="button"
           className="btn"
-          onClick={() => setVisibleGroupCount((current) => current + 10)}
+          onClick={() => updateVisibleGroupCount(visibleGroupCount + 10)}
         >
           加载更早消息
         </button>
       ) : null}
       {shownGroups.map((group) => (
-        <ConversationTurnGroup key={group.key} group={group} />
+        <ConversationTurnGroup
+          key={group.key}
+          group={group}
+          highlightedMessageId={highlightedMessageId}
+        />
       ))}
     </div>
   );
@@ -1489,19 +2225,28 @@ function TokenUsageBlock({ item }: { item: ConversationItem }) {
   );
 }
 
-function ConversationItemBlock({ item }: { item: ConversationItem }) {
+function ConversationItemBlock({
+  item,
+  highlighted = false,
+}: {
+  item: ConversationItem;
+  highlighted?: boolean;
+}) {
   const text = textFromItem(item);
 
   if (item.itemType === "userMessage") {
     return (
-      <div className="conversation-message user-message">
+      <div
+        id={`user-message-${item.id}`}
+        className={`conversation-message user-message${highlighted ? " is-highlighted" : ""}`}
+      >
         <div className="message-role">你</div>
         <div className="message-body">{text}</div>
         {Array.isArray(item.payload?.mentions) ? (
-          <div className="conversation-mentions">
+          <div className="user-message-mentions">
             {(item.payload.mentions as Array<{ name: string; path: string }>).map(
               (mention) => (
-                <span key={mention.path} className="mention-chip">
+                <span key={mention.path} className="user-mention-chip">
                   {mention.name}
                 </span>
               ),

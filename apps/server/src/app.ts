@@ -433,6 +433,32 @@ export async function buildApp(service: BugfixService) {
     return service.conversationService.listConversations(projectId);
   });
 
+  app.get(
+    "/api/projects/:projectId/conversations/page",
+    async (request, reply) => {
+      const { projectId } = request.params as { projectId: string };
+      const { page, pageSize } = request.query as {
+        page?: string;
+        pageSize?: string;
+      };
+      const parsedPage = Number.parseInt(page ?? "1", 10);
+      const parsedPageSize = Number.parseInt(pageSize ?? "20", 10);
+      if (
+        !Number.isFinite(parsedPage) ||
+        !Number.isFinite(parsedPageSize) ||
+        parsedPage < 1 ||
+        parsedPageSize < 1
+      ) {
+        return reply.code(400).send({ error: "invalid pagination parameters" });
+      }
+      return service.conversationService.listConversationsPage(
+        projectId,
+        parsedPage,
+        parsedPageSize,
+      );
+    },
+  );
+
   app.post("/api/projects/:projectId/conversations", async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
     try {

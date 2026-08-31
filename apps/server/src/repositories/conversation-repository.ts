@@ -73,6 +73,28 @@ export class ConversationRepository {
       .map((row) => rowToConversation(row as unknown as Record<string, unknown>));
   }
 
+  count(projectId: string): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS count FROM conversations WHERE project_id = ?",
+      )
+      .get(projectId) as { count: number | bigint };
+    return Number(row.count);
+  }
+
+  listPage(
+    projectId: string,
+    limit: number,
+    offset: number,
+  ): Conversation[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM conversations WHERE project_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+      )
+      .all(projectId, limit, offset)
+      .map((row) => rowToConversation(row as unknown as Record<string, unknown>));
+  }
+
   get(id: string): Conversation | undefined {
     const row = this.db
       .prepare("SELECT * FROM conversations WHERE id = ?")

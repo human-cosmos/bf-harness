@@ -7,6 +7,7 @@ import {
   stepperForState,
 } from "./workflow-model.js";
 import { TaskRail } from "./TaskRail.js";
+import { PageBreadcrumb } from "./PageBreadcrumb.js";
 
 function Badge({
   tone = "neutral",
@@ -114,24 +115,25 @@ export function TaskShell({
   const isTaskDetail = location.pathname === `/tasks/${state.task.id}`;
   const isCurrentActionPage =
     nextAction.key !== "none" && location.pathname === nextAction.href;
+  const crumbs: Array<{ label: string; to?: string }> = [
+    { label: "项目", to: "/" },
+  ];
+  if (state.project) {
+    crumbs.push({ label: "项目任务", to: `/projects/${state.project.id}` });
+  }
+  if (isTaskDetail) {
+    crumbs.push({ label: "任务详情" });
+  } else {
+    crumbs.push({ label: "任务详情", to: `/tasks/${state.task.id}` });
+    crumbs.push({ label: title });
+  }
   const runningJob = state.jobs.find((job) => job.status === "running");
   const latestFailedJob = state.jobs.find((job) => job.status === "failed");
   const isWorking = stepper.steps.some((step) => step.state === "working");
 
   return (
     <section>
-      <div className="page-context">
-        <Link
-          to={
-            state.project
-              ? `/projects/${state.project.id}`
-              : "/"
-          }
-          className="btn back-link"
-        >
-          返回项目任务
-        </Link>
-      </div>
+      <PageBreadcrumb items={crumbs} />
 
       <header className="page-header">
         <div>

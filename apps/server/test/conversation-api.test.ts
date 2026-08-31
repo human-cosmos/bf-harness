@@ -94,6 +94,61 @@ describe("conversation API", () => {
     }
   });
 
+  it("paginates the conversation list", async () => {
+    const db = openDatabase(":memory:");
+    const worktreeRoot = mkdtempSync(join(tmpdir(), "conversation-api-"));
+    const service = new BugfixService({
+      db,
+      worktreeRoot,
+      eventBus: new EventBus(),
+    });
+    const project = new ProjectRepository(db).create({
+      name: "demo",
+      repoPath: "/tmp/demo",
+      instructionSources: [],
+      validationCommands: [],
+      allowedPaths: [],
+      forbiddenPaths: [],
+    });
+    for (let index = 0; index < 5; index += 1) {
+      await service.conversationService.createConversation({
+        projectId: project.id,
+        title: `对话 ${index + 1}`,
+      });
+    }
+    const app = await buildApp(service);
+
+    try {
+      const firstPage = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.id}/conversations/page?page=1&pageSize=2`,
+      });
+      expect(firstPage.statusCode).toBe(200);
+      const firstBody = firstPage.json();
+      expect(firstBody.total).toBe(5);
+      expect(firstBody.page).toBe(1);
+      expect(firstBody.pageSize).toBe(2);
+      expect(firstBody.items).toHaveLength(2);
+
+      const lastPage = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.id}/conversations/page?page=3&pageSize=2`,
+      });
+      expect(lastPage.statusCode).toBe(200);
+      expect(lastPage.json().items).toHaveLength(1);
+
+      const invalid = await app.inject({
+        method: "GET",
+        url: `/api/projects/${project.id}/conversations/page?page=abc`,
+      });
+      expect(invalid.statusCode).toBe(400);
+    } finally {
+      await app.close();
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("rejects invalid conversation pagination parameters", async () => {
     const db = openDatabase(":memory:");
     const worktreeRoot = mkdtempSync(join(tmpdir(), "conversation-api-"));

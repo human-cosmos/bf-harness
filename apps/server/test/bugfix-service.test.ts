@@ -132,6 +132,113 @@ describe("BugfixService", () => {
     );
   });
 
+  it("counts only the latest validation outcome per command in attention", () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      const project = service.projects.create({
+        name: "attention",
+        repoPath: "/tmp/demo",
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+
+      const outcome = (
+        status: "passed" | "failed" | "timeout",
+        finishedAt: string,
+      ) => ({
+        command: {
+          id: "test",
+          label: "test",
+          command: ["npm", "test"],
+          timeoutSec: 60,
+        },
+        cwd: "/repo",
+        startedAt: finishedAt,
+        finishedAt,
+        exitCode: status === "passed" ? 0 : 1,
+        status,
+        stdout: "",
+        stderr: "",
+      });
+
+      service.execution.validationResults.save(
+        task.id,
+        outcome("failed", "2026-01-01T00:00:00.000Z"),
+      );
+      service.execution.validationResults.save(
+        task.id,
+        outcome("passed", "2026-01-02T00:00:00.000Z"),
+      );
+
+      const attention = service.getAttention(task.id);
+      expect(attention.validation.failed).toBe(0);
+      expect(attention.validation.timeout).toBe(0);
+      expect(attention.validation.passed).toBe(1);
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("still surfaces the latest failed validation for a non-accepted task", () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      const project = service.projects.create({
+        name: "attention-failed",
+        repoPath: "/tmp/demo",
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+
+      service.execution.validationResults.save(task.id, {
+        command: {
+          id: "test",
+          label: "test",
+          command: ["npm", "test"],
+          timeoutSec: 60,
+        },
+        cwd: "/repo",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        finishedAt: "2026-01-01T00:00:00.000Z",
+        exitCode: 1,
+        status: "timeout",
+        stdout: "",
+        stderr: "",
+      });
+
+      const attention = service.getAttention(task.id);
+      expect(attention.validation.timeout).toBe(1);
+      expect(attention.validation.failed).toBe(0);
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("returns the existing worktree when prepareWorktree is called again", async () => {
     const { db, service, worktreeRoot } = createService();
     const repo = mkdtempSync(join(tmpdir(), "bugfix-service-repo-"));

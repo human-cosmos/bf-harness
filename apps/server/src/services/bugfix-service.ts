@@ -89,6 +89,33 @@ function fallbackTaskTitle(description: string): string {
   return normalized.slice(0, 80) || "未命名 Bugfix 任务";
 }
 
+/**
+ * Validation results are append-only, so a later passing run can coexist with
+ * stale failures from earlier runs. Attention should only reflect the newest
+ * outcome for each command, matching the "变更与检查" page's latest view.
+ */
+function latestValidationRows(
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const latest = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const commandId = String(row.command_id ?? "");
+    const previous = latest.get(commandId);
+    if (!previous) {
+      latest.set(commandId, row);
+      continue;
+    }
+    const rowTime = String(row.finished_at ?? row.started_at ?? "");
+    const previousTime = String(
+      previous.finished_at ?? previous.started_at ?? "",
+    );
+    if (rowTime >= previousTime) {
+      latest.set(commandId, row);
+    }
+  }
+  return [...latest.values()];
+}
+
 export interface BugfixServiceOptions {
   db: AppDatabase;
   worktreeRoot: string;
@@ -628,7 +655,9 @@ export class BugfixService {
     const pendingApprovals = this.execution.approvals
       .listByTask(taskId)
       .filter((approval) => !approval.decision).length;
-    const validationRows = this.execution.validationResults.listByTask(taskId);
+    const validationRows = latestValidationRows(
+      this.execution.validationResults.listByTask(taskId),
+    );
     const validation = {
       passed: validationRows.filter((row) => String(row.status) === "passed").length,
       failed: validationRows.filter((row) => String(row.status) === "failed").length,

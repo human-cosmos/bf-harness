@@ -161,6 +161,23 @@ export class ConversationService {
     return this.conversations.list(projectId);
   }
 
+  listConversationsPage(
+    projectId: string,
+    page: number,
+    pageSize: number,
+  ): { items: Conversation[]; total: number; page: number; pageSize: number } {
+    const total = this.conversations.count(projectId);
+    const safePage = Math.max(1, page);
+    const safePageSize = Math.min(100, Math.max(1, pageSize));
+    const offset = (safePage - 1) * safePageSize;
+    const items = this.conversations.listPage(
+      projectId,
+      safePageSize,
+      offset,
+    );
+    return { items, total, page: safePage, pageSize: safePageSize };
+  }
+
   getConversation(id: string): Conversation | undefined {
     return this.conversations.get(id);
   }
