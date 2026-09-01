@@ -731,7 +731,7 @@ export function SettingsPage() {
 
       <Card
         title="安全默认值"
-        description="配置新建对话和 Bugfix 各阶段的默认审批策略。全自动执行会跳过人工批准计划和验收；安全边界仍保持硬编码。默认保持人工审批。"
+        description="配置新建对话和 Bugfix 各阶段的默认审批策略。全自动执行会跳过人工批准计划和验收；安全边界仍保持硬编码。默认使用全自动执行。"
         actions={
           <button
             type="button"

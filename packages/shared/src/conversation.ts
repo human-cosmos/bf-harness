@@ -206,8 +206,8 @@ export interface ConversationClarification {
 export const DEFAULT_CONVERSATION_POLICY: ConversationPolicy = {
   sandboxMode: "workspace-write",
   networkAccess: false,
-  approvalPolicy: "on-request",
-  approvalsReviewer: "user",
+  approvalPolicy: "never",
+  approvalsReviewer: "auto_review",
   allowGitWrites: false,
 };
 

@@ -53,10 +53,10 @@ import {
 type BadgeTone = "neutral" | "active" | "success" | "warning" | "danger";
 
 const DEFAULT_PROJECT_FIELDS = {
-  instructionSources: "AGENTS.md",
+  instructionSources: "",
   validationCommands: "[]",
-  allowedPaths: "src/\ntest/",
-  forbiddenPaths: "node_modules/",
+  allowedPaths: "",
+  forbiddenPaths: "",
 };
 
 export function Badge({

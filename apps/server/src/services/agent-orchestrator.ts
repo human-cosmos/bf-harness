@@ -134,6 +134,32 @@ export class AgentOrchestrator {
     }
   }
 
+  private async resumeThreadWithRetry(
+    runtime: AppServerRuntime,
+    threadId: string,
+    overrides: Parameters<AppServerRuntime["resumeThread"]>[1],
+  ): Promise<unknown> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await runtime.resumeThread(threadId, overrides);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const isActiveWriter =
+          message.includes("already has an active writer") ||
+          (message.includes("active writer") && message.includes("-32600"));
+        if (!isActiveWriter) {
+          throw error;
+        }
+        lastError = error;
+        await new Promise((resolve) =>
+          setTimeout(resolve, 500 * (attempt + 1)),
+        );
+      }
+    }
+    throw lastError;
+  }
+
   private trackRuntime(taskId: string, runtime: AppServerRuntime): void {
     this.activeRuntimes.set(taskId, runtime);
   }
@@ -410,7 +436,7 @@ export class AgentOrchestrator {
         version: "0.1.0",
       });
       const settings = this.getSystemSettings();
-      await runtime.resumeThread(session.codexThreadId, {
+      await this.resumeThreadWithRetry(runtime, session.codexThreadId, {
         approvalPolicy: settings.security.implementApprovalPolicy,
         approvalsReviewer: settings.security.implementApprovalsReviewer,
         developerInstructions: developerInstructions || undefined,
@@ -521,7 +547,7 @@ export class AgentOrchestrator {
         title: "Bugfix Harness",
         version: "0.1.0",
       });
-      await runtime.resumeThread(session.codexThreadId, {
+      await this.resumeThreadWithRetry(runtime, session.codexThreadId, {
         approvalPolicy: "never",
         approvalsReviewer: "auto-review",
         developerInstructions: developerInstructions || undefined,

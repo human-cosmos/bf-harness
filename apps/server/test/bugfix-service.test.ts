@@ -502,6 +502,13 @@ describe("BugfixService", () => {
   it("leaves the task waiting for plan approval in manual mode", async () => {
     const { db, service, worktreeRoot } = createService();
     try {
+      service.systemSettings.save({
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          ...DEFAULT_SYSTEM_SETTINGS.security,
+          bugfixAutomationMode: "manual",
+        },
+      });
       const { taskId } = createAnalyzableTask(service);
       vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
         const plan = samplePlan();

@@ -17,8 +17,8 @@ describe("conversation shared model", () => {
     expect(parsed.policy).toEqual(DEFAULT_CONVERSATION_POLICY);
     expect(parsed.policy.sandboxMode).toBe("workspace-write");
     expect(parsed.policy.networkAccess).toBe(false);
-    expect(parsed.policy.approvalPolicy).toBe("on-request");
-    expect(parsed.policy.approvalsReviewer).toBe("user");
+    expect(parsed.policy.approvalPolicy).toBe("never");
+    expect(parsed.policy.approvalsReviewer).toBe("auto_review");
   });
 
   it("rejects invalid policy values", () => {

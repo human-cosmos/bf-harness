@@ -37,3 +37,5 @@ nsis:
   perMachine: true
   allowToChangeInstallationDirectory: true
   deleteAppDataOnUninstall: true
+  installerIcon: icon.ico
+  uninstallerIcon: icon.ico

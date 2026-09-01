@@ -166,7 +166,7 @@ describe("system settings service", () => {
 
       const second = openDatabase(dbPath);
       const loaded = new SystemSettingsService(second).get();
-      expect(loaded.security.bugfixAutomationMode).toBe("manual");
+      expect(loaded.security.bugfixAutomationMode).toBe("auto");
       expect(loaded.security.analyzeApprovalPolicy).toBe("never");
       second.close();
     } finally {

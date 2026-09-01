@@ -90,17 +90,17 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   },
   security: {
     conversationDefaults: { ...DEFAULT_CONVERSATION_POLICY },
-    bugfixAutomationMode: "manual",
-    analyzeApprovalPolicy: "on-request",
-    analyzeApprovalsReviewer: "user",
-    implementApprovalPolicy: "on-request",
-    implementApprovalsReviewer: "user",
+    bugfixAutomationMode: "auto",
+    analyzeApprovalPolicy: "never",
+    analyzeApprovalsReviewer: "auto_review",
+    implementApprovalPolicy: "never",
+    implementApprovalsReviewer: "auto_review",
   },
   projectDefaults: {
-    instructionSources: ["AGENTS.md"],
+    instructionSources: [],
     validationCommands: [],
-    allowedPaths: ["src/", "test/"],
-    forbiddenPaths: ["node_modules/"],
+    allowedPaths: [],
+    forbiddenPaths: [],
     newValidationCommand: {
       id: "check",
       label: "检查命令",
@@ -146,7 +146,7 @@ export const modelSystemSettingsSchema = z.object({
 
 export const securitySystemSettingsSchema = z.object({
   conversationDefaults: conversationPolicySchema,
-  bugfixAutomationMode: z.enum(["manual", "auto"]).default("manual"),
+  bugfixAutomationMode: z.enum(["manual", "auto"]).default("auto"),
   analyzeApprovalPolicy: z.enum([
     "on-request",
     "never",

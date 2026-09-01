@@ -35,13 +35,13 @@ describe("system settings schema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("defaults bugfix automation to manual review", () => {
-    expect(DEFAULT_SYSTEM_SETTINGS.security.bugfixAutomationMode).toBe("manual");
+  it("defaults bugfix automation to automatic execution", () => {
+    expect(DEFAULT_SYSTEM_SETTINGS.security.bugfixAutomationMode).toBe("auto");
     expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalPolicy).toBe(
-      "on-request",
+      "never",
     );
     expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalsReviewer).toBe(
-      "user",
+      "auto_review",
     );
   });
 
@@ -54,7 +54,7 @@ describe("system settings schema", () => {
         implementApprovalsReviewer: "auto_review",
       },
     });
-    expect(merged.security.bugfixAutomationMode).toBe("manual");
+    expect(merged.security.bugfixAutomationMode).toBe("auto");
     expect(merged.security.analyzeApprovalPolicy).toBe("never");
     expect(merged.agent).toEqual(DEFAULT_SYSTEM_SETTINGS.agent);
   });

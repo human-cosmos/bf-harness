@@ -588,6 +588,13 @@ export class BugfixService {
     if (!status) {
       return;
     }
+    if (status === "WAITING_FOR_ACCEPTANCE") {
+      this.workflow.rejectTask(
+        taskId,
+        "自动化流水线在生成报告或验收阶段失败，已回退为未采用。",
+      );
+      return;
+    }
     if (canTransition(status, "FAILED")) {
       this.workflow.transitionTask(taskId, "FAILED");
       return;
