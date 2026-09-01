@@ -5,6 +5,7 @@ electronDist: node_modules/electron/dist
 
 directories:
   app: .
+  buildResources: build
   output: release
 
 npmRebuild: false
@@ -28,7 +29,7 @@ extraResources:
 win:
   target:
     - nsis
-  icon: build/icon.ico
+  icon: icon.ico
   signExecutable: false
 
 nsis:
