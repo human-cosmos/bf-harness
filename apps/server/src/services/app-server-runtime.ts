@@ -506,6 +506,24 @@ export class AppServerRuntime extends EventEmitter {
     terminateChildTree(this.child);
   }
 
+  async closeAndWait(timeoutMs = 3_000): Promise<void> {
+    const child = this.child;
+    if (!child) {
+      return;
+    }
+    this.close();
+    if (this.exitInfo) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
   private handleMessage(message: RuntimeMessage): void {
     this.markTurnActivity();
     if (message.method && message.id !== undefined) {

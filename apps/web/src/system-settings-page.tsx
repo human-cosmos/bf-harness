@@ -731,7 +731,7 @@ export function SettingsPage() {
 
       <Card
         title="安全默认值"
-        description="这里只配置新建对话和 Bugfix 各阶段的默认审批策略，安全边界仍保持硬编码。"
+        description="配置新建对话和 Bugfix 各阶段的默认审批策略。全自动执行会跳过人工批准计划和验收；安全边界仍保持硬编码。默认保持人工审批。"
         actions={
           <button
             type="button"
@@ -744,6 +744,26 @@ export function SettingsPage() {
         }
       >
         <div className="settings-grid">
+          <label className="field">
+            Bugfix 执行模式
+            <select
+              value={security.bugfixAutomationMode}
+              onChange={(event) =>
+                updateSettings((current) => ({
+                  ...current,
+                  security: {
+                    ...current.security,
+                    bugfixAutomationMode: event.target.value as
+                      | "manual"
+                      | "auto",
+                  },
+                }))
+              }
+            >
+              <option value="auto">全自动执行</option>
+              <option value="manual">人工审批</option>
+            </select>
+          </label>
           <label className="field">
             新建对话沙箱模式
             <select

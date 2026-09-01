@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_SYSTEM_SETTINGS, type RepairPlan } from "@bugfix-harness/shared";
 import { openDatabase } from "../src/db.js";
 import { EventBus } from "../src/services/event-bus.js";
 import { BugfixService } from "../src/services/bugfix-service.js";
@@ -497,4 +498,136 @@ describe("BugfixService", () => {
       db.close();
     }
   });
+
+  it("leaves the task waiting for plan approval in manual mode", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      const { taskId } = createAnalyzableTask(service);
+      vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
+        const plan = samplePlan();
+        service.workflow.submitPlan(id, plan);
+        return plan;
+      });
+      const implement = vi.spyOn(service.agent, "implement");
+
+      service.startAnalyze(taskId);
+      await vi.waitUntil(
+        () => service.getAnalysisRun(taskId)?.status === "SUCCEEDED",
+      );
+
+      expect(service.tasks.get(taskId)?.status).toBe("WAITING_FOR_PLAN_APPROVAL");
+      expect(implement).not.toHaveBeenCalled();
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("auto-runs implement, validation, and acceptance in auto mode", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      service.systemSettings.save({
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          ...DEFAULT_SYSTEM_SETTINGS.security,
+          bugfixAutomationMode: "auto",
+        },
+      });
+      const { taskId } = createAnalyzableTask(service);
+      vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
+        const plan = samplePlan();
+        service.workflow.submitPlan(id, plan);
+        return plan;
+      });
+      vi.spyOn(service.agent, "implement").mockImplementation(async (id) => {
+        service.workflow.transitionTask(id, "VALIDATING");
+        return "done";
+      });
+      vi.spyOn(service.execution, "runValidations").mockImplementation(
+        async (id) => {
+          service.tasks.updateStatus(id, "WAITING_FOR_ACCEPTANCE");
+          return [];
+        },
+      );
+      vi.spyOn(service.execution, "buildReport").mockResolvedValue({} as never);
+
+      service.startAnalyze(taskId);
+      await vi.waitUntil(() => service.tasks.get(taskId)?.status === "ACCEPTED");
+      expect(service.execution.runValidations).toHaveBeenCalledWith(taskId);
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("marks the task failed when automated implement throws", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      service.systemSettings.save({
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          ...DEFAULT_SYSTEM_SETTINGS.security,
+          bugfixAutomationMode: "auto",
+        },
+      });
+      const { taskId } = createAnalyzableTask(service);
+      vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
+        const plan = samplePlan();
+        service.workflow.submitPlan(id, plan);
+        return plan;
+      });
+      vi.spyOn(service.agent, "implement").mockRejectedValue(
+        new Error("implement exploded"),
+      );
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        service.startAnalyze(taskId);
+        await vi.waitUntil(() => service.tasks.get(taskId)?.status === "FAILED");
+        expect(service.getAnalysisRun(taskId)?.status).toBe("SUCCEEDED");
+      } finally {
+        error.mockRestore();
+      }
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
 });
+
+function samplePlan(): RepairPlan {
+  return {
+    problemSummary: "bug",
+    rootCauseHypothesis: "cause",
+    evidence: ["log"],
+    proposedFiles: ["src/app.ts"],
+    fixStrategy: "fix it",
+    regressionTests: ["npm test"],
+    validationCommands: ["npm test"],
+    risks: [],
+    openQuestions: [],
+  };
+}
+
+function createAnalyzableTask(service: BugfixService) {
+  const project = service.projects.create({
+    name: "auto",
+    repoPath: "/tmp/demo",
+    instructionSources: [],
+    validationCommands: [],
+    allowedPaths: [],
+    forbiddenPaths: [],
+  });
+  const task = service.tasks.create({
+    projectId: project.id,
+    title: "fix",
+    bugDescription: "broken",
+    observedBehavior: "error",
+    expectedBehavior: "works",
+    relatedFiles: [],
+    acceptanceCriteria: [],
+    constraints: [],
+  });
+  service.tasks.updateStatus(task.id, "ANALYZING");
+  return { taskId: task.id };
+}

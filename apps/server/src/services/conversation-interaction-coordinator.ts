@@ -11,6 +11,11 @@ export type ConversationApprovalDecision =
   | "decline"
   | "cancel";
 
+export interface SessionApprovalGrant {
+  key: string;
+  permissions?: unknown;
+}
+
 interface ApprovalWaiter {
   resolve: (decision: ConversationApprovalDecision) => void;
   timer: ReturnType<typeof setTimeout> | null;
@@ -21,8 +26,24 @@ interface ClarificationWaiter {
   timer: ReturnType<typeof setTimeout> | null;
 }
 
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(
+    ([left], [right]) => left.localeCompare(right),
+  );
+  return `{${entries
+    .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+    .join(",")}}`;
+}
+
 export class ConversationInteractionCoordinator {
   private readonly approvalWaiters = new Map<string, ApprovalWaiter>();
+  private readonly pendingGrants = new Map<string, SessionApprovalGrant>();
   private readonly clarificationWaiters = new Map<string, ClarificationWaiter>();
 
   constructor(
@@ -33,6 +54,8 @@ export class ConversationInteractionCoordinator {
     private readonly policy: ConversationPolicy,
     private readonly dynamicTools: DynamicToolRegistry,
     private readonly timeoutMs: number | null = null,
+    private readonly sessionApprovals: Map<string, SessionApprovalGrant> = new Map(),
+    private readonly onSessionApproval?: (grant: SessionApprovalGrant) => void,
   ) {}
 
   async handleServerRequest(message: RuntimeMessage): Promise<unknown | undefined> {
@@ -76,6 +99,14 @@ export class ConversationInteractionCoordinator {
       if (waiter.timer !== null) {
         clearTimeout(waiter.timer);
       }
+      if (decision === "acceptForSession") {
+        const grant = this.pendingGrants.get(approvalId);
+        if (grant) {
+          this.sessionApprovals.set(grant.key, grant);
+          this.onSessionApproval?.(grant);
+        }
+      }
+      this.pendingGrants.delete(approvalId);
       waiter.resolve(decision);
     }
     this.events.publish({
@@ -119,6 +150,7 @@ export class ConversationInteractionCoordinator {
       waiter.resolve("cancel");
     }
     this.approvalWaiters.clear();
+    this.pendingGrants.clear();
 
     for (const [id, waiter] of this.clarificationWaiters) {
       if (waiter.timer !== null) {
@@ -142,6 +174,10 @@ export class ConversationInteractionCoordinator {
     const payload = networkHost
       ? { ...params, host: networkHost }
       : params;
+    const grant = this.grantFor("item/commandExecution/requestApproval", params);
+    if (this.sessionApprovals.has(grant.key)) {
+      return { decision: "acceptForSession" };
+    }
 
     const decision = await this.createAndWaitApproval({
       requestId,
@@ -149,6 +185,7 @@ export class ConversationInteractionCoordinator {
       kind: requestKind,
       payload,
       riskLevel: networkHost ? "high" : "prompt",
+      grant,
     });
 
     return { decision };
@@ -158,12 +195,17 @@ export class ConversationInteractionCoordinator {
     requestId: number,
     params: Record<string, unknown>,
   ): Promise<{ decision: ConversationApprovalDecision }> {
+    const grant = this.grantFor("item/fileChange/requestApproval", params);
+    if (this.sessionApprovals.has(grant.key)) {
+      return { decision: "acceptForSession" };
+    }
     const decision = await this.createAndWaitApproval({
       requestId,
       method: "item/fileChange/requestApproval",
       kind: "file",
       payload: params,
       riskLevel: "prompt",
+      grant,
     });
     return { decision };
   }
@@ -172,12 +214,21 @@ export class ConversationInteractionCoordinator {
     requestId: number,
     params: Record<string, unknown>,
   ): Promise<{ permissions: unknown; scope: "turn" | "session" }> {
+    const grant = this.grantFor("item/permissions/requestApproval", params);
+    const cached = this.sessionApprovals.get(grant.key);
+    if (cached) {
+      return {
+        permissions: cached.permissions ?? {},
+        scope: "session",
+      };
+    }
     const decision = await this.createAndWaitApproval({
       requestId,
       method: "item/permissions/requestApproval",
       kind: "permissions",
       payload: params,
       riskLevel: "prompt",
+      grant,
     });
     if (decision === "accept" || decision === "acceptForSession") {
       return {
@@ -192,12 +243,17 @@ export class ConversationInteractionCoordinator {
     requestId: number,
     params: Record<string, unknown>,
   ): Promise<{ decision: unknown }> {
+    const grant = this.grantFor("execCommandApproval", params);
+    if (this.sessionApprovals.has(grant.key)) {
+      return { decision: "approved" };
+    }
     const decision = await this.createAndWaitApproval({
       requestId,
       method: "execCommandApproval",
       kind: "command",
       payload: params,
       riskLevel: "prompt",
+      grant,
     });
     return {
       decision:
@@ -213,12 +269,17 @@ export class ConversationInteractionCoordinator {
     requestId: number,
     params: Record<string, unknown>,
   ): Promise<{ decision: unknown }> {
+    const grant = this.grantFor("applyPatchApproval", params);
+    if (this.sessionApprovals.has(grant.key)) {
+      return { decision: "approved" };
+    }
     const decision = await this.createAndWaitApproval({
       requestId,
       method: "applyPatchApproval",
       kind: "file",
       payload: params,
       riskLevel: "prompt",
+      grant,
     });
     return {
       decision:
@@ -236,6 +297,7 @@ export class ConversationInteractionCoordinator {
     kind: string;
     payload: unknown;
     riskLevel: string;
+    grant: SessionApprovalGrant;
   }): Promise<ConversationApprovalDecision> {
     const approval = this.approvals.create({
       conversationId: this.conversationId,
@@ -250,6 +312,7 @@ export class ConversationInteractionCoordinator {
       type: "conversation.approval.requested",
       payload: { conversationId: this.conversationId, approval },
     });
+    this.pendingGrants.set(approval.id, input.grant);
 
     return new Promise<ConversationApprovalDecision>((resolve) => {
       const waiter: ApprovalWaiter = {
@@ -266,6 +329,52 @@ export class ConversationInteractionCoordinator {
       };
       this.approvalWaiters.set(approval.id, waiter);
     });
+  }
+
+  private grantFor(
+    method: string,
+    params: Record<string, unknown>,
+  ): SessionApprovalGrant {
+    return {
+      key: this.approvalKeyFor(method, params),
+      permissions: params.permissions,
+    };
+  }
+
+  private approvalKeyFor(
+    method: string,
+    params: Record<string, unknown>,
+  ): string {
+    const kind = String(params.kind ?? "command");
+    const networkHost = (params.networkApprovalContext as {
+      host?: string | null;
+    } | null)?.host;
+    if (networkHost) {
+      return `${method}:network:${networkHost}`;
+    }
+    if (
+      method === "item/commandExecution/requestApproval" ||
+      method === "execCommandApproval"
+    ) {
+      const command = Array.isArray(params.command)
+        ? params.command.map(String).join(" ")
+        : String(params.command ?? "");
+      return `${method}:${kind}:${String(params.cwd ?? "")}:${command}`;
+    }
+    if (
+      method === "item/fileChange/requestApproval" ||
+      method === "applyPatchApproval"
+    ) {
+      const path = params.path ?? params.target ?? params.grantRoot ?? "";
+      const files = Array.isArray(params.files)
+        ? stableSerialize(params.files)
+        : "";
+      return `${method}:${kind}:${String(path)}:${files}`;
+    }
+    if (method === "item/permissions/requestApproval") {
+      return `${method}:${kind}:${stableSerialize(params.permissions ?? {})}`;
+    }
+    return `${method}:${kind}:${stableSerialize(params)}`;
   }
 
   private async handleClarification(

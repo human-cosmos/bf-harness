@@ -54,24 +54,7 @@ type BadgeTone = "neutral" | "active" | "success" | "warning" | "danger";
 
 const DEFAULT_PROJECT_FIELDS = {
   instructionSources: "AGENTS.md",
-  validationCommands: JSON.stringify(
-    [
-      {
-        id: "test",
-        label: "运行测试",
-        command: ["npm", "test"],
-        timeoutSec: 300,
-      },
-      {
-        id: "typecheck",
-        label: "类型检查",
-        command: ["npm", "run", "typecheck"],
-        timeoutSec: 300,
-      },
-    ],
-    null,
-    2,
-  ),
+  validationCommands: "[]",
   allowedPaths: "src/\ntest/",
   forbiddenPaths: "node_modules/",
 };
@@ -1464,10 +1447,6 @@ export function NewProjectPage() {
       setError("请填写远程仓库地址。");
       return;
     }
-    if (validationCommands.length === 0) {
-      setError("至少需要一条验证命令。");
-      return;
-    }
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -1678,7 +1657,7 @@ export function NewProjectPage() {
               </button>
             </div>
             <span className="field-hint">
-              每一行是一条命令，例如：npm run typecheck。超时时间单位为秒。
+              留空则在验证时根据仓库脚本自动推断。也可以手动添加，例如 npm run typecheck。超时时间单位为秒。
             </span>
             {validationCommands.map((command, index) => (
               <div className="validation-command" key={command.id}>
@@ -1720,7 +1699,6 @@ export function NewProjectPage() {
                     type="button"
                     className="btn-danger"
                     aria-label={`删除验证命令 ${index + 1}`}
-                    disabled={validationCommands.length === 1}
                     onClick={() => removeCommand(index)}
                   >
                     删除

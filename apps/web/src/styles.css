@@ -1388,13 +1388,14 @@ select {
 
 .meta-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-5);
 }
 
 .meta-cell {
   display: grid;
   gap: 3px;
+  min-width: 0;
 }
 
 .meta-label {

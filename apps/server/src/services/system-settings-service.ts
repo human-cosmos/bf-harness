@@ -1,5 +1,6 @@
 import {
   DEFAULT_SYSTEM_SETTINGS,
+  mergeSystemSettings,
   systemSettingsSchema,
   type SystemSettings,
 } from "@bugfix-harness/shared";
@@ -70,7 +71,11 @@ export class SystemSettingsService {
   }
 
   get(): SystemSettings {
-    return this.repository.get() ?? this.getDefaults();
+    const stored = this.repository.get();
+    if (!stored) {
+      return this.getDefaults();
+    }
+    return mergeSystemSettings(stored, this.getDefaults());
   }
 
   save(input: unknown): SystemSettings {

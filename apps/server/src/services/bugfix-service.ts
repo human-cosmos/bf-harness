@@ -1,4 +1,5 @@
 import {
+  canTransition,
   createBugfixTaskInputSchema,
   createProjectFromRemoteInputSchema,
   createProjectInputSchema,
@@ -37,7 +38,6 @@ import { AgentEventRepository } from "../repositories/agent-event-repository.js"
 import { AgentOrchestrator } from "./agent-orchestrator.js";
 import { EventBus } from "./event-bus.js";
 import { redactSensitive } from "./redaction.js";
-import { reconcileValidationCommands } from "./validation-command-infer.js";
 import {
   ClarificationCoordinator,
   type ClarificationAnswers,
@@ -188,6 +188,7 @@ export class BugfixService {
       this.worktrees,
       this.workflow.plans,
       this.events,
+      () => this.systemSettings.get().security.bugfixAutomationMode,
     );
     this.clarifications = new ClarificationCoordinator(this.events);
     this.conversationService = new ConversationService({
@@ -254,10 +255,7 @@ export class BugfixService {
     }
     const project = this.projects.create({
       ...parsed,
-      validationCommands: reconcileValidationCommands(
-        parsed.repoPath,
-        parsed.validationCommands,
-      ),
+      validationCommands: parsed.validationCommands,
     });
     this.events.publish({ type: "project.created", payload: project });
     return project;
@@ -279,10 +277,8 @@ export class BugfixService {
     }
     const nextCommands =
       parsed.validationCommands !== undefined
-        ? reconcileValidationCommands(nextRepoPath, parsed.validationCommands)
-        : parsed.repoPath !== undefined
-          ? reconcileValidationCommands(nextRepoPath, existing.validationCommands)
-          : existing.validationCommands;
+        ? parsed.validationCommands
+        : existing.validationCommands;
     const project = this.projects.update(id, {
       ...parsed,
       validationCommands: nextCommands,
@@ -553,9 +549,10 @@ export class BugfixService {
 
     void this.agent
       .analyze(taskId)
-      .then((plan) => {
+      .then(async (plan) => {
         run.status = "SUCCEEDED";
         run.plan = plan;
+        await this.runAutomatedAfterAnalysis(taskId);
       })
       .catch((error) => {
         run.status = "FAILED";
@@ -563,6 +560,76 @@ export class BugfixService {
       });
 
     return { status: "STARTED" as const };
+  }
+
+  private async runAutomatedAfterAnalysis(taskId: string): Promise<void> {
+    if (this.systemSettings.get().security.bugfixAutomationMode !== "auto") {
+      return;
+    }
+
+    try {
+      this.workflow.approvePlan(taskId);
+      await this.agent.implement(taskId);
+      await this.runAutomatedValidationLoop(taskId);
+
+      const task = this.tasks.get(taskId);
+      if (task?.status === "WAITING_FOR_ACCEPTANCE") {
+        await this.execution.buildReport(taskId);
+        this.workflow.acceptTask(taskId);
+      }
+    } catch (error) {
+      console.error(`Automated bugfix task ${taskId} failed`, error);
+      this.failAutomatedTask(taskId);
+    }
+  }
+
+  private failAutomatedTask(taskId: string): void {
+    const status = this.tasks.get(taskId)?.status;
+    if (!status) {
+      return;
+    }
+    if (canTransition(status, "FAILED")) {
+      this.workflow.transitionTask(taskId, "FAILED");
+      return;
+    }
+    if (canTransition(status, "BLOCKED")) {
+      this.workflow.transitionTask(taskId, "BLOCKED");
+    }
+  }
+
+  private async runAutomatedValidationLoop(taskId: string): Promise<void> {
+    const maxRounds = this.systemSettings.get().storage.autoRepairRounds;
+    let repairs = 0;
+
+    while (true) {
+      await this.execution.runValidations(taskId);
+      const task = this.tasks.get(taskId);
+      if (!task || task.status !== "VALIDATING") {
+        return;
+      }
+
+      const failed = latestValidationRows(
+        this.execution.validationResults.listByTask(taskId),
+      ).filter((row) => row.status === "failed" || row.status === "timeout");
+      if (failed.length === 0) {
+        return;
+      }
+
+      if (repairs >= maxRounds) {
+        this.workflow.transitionTask(taskId, "BLOCKED");
+        return;
+      }
+
+      try {
+        await this.continueFix(taskId);
+      } catch (error) {
+        if (this.tasks.get(taskId)?.status === "BLOCKED") {
+          return;
+        }
+        throw error;
+      }
+      repairs += 1;
+    }
   }
 
   getAnalysisRun(taskId: string) {

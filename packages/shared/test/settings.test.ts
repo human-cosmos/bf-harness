@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SYSTEM_SETTINGS,
+  mergeSystemSettings,
   systemSettingsSchema,
 } from "../src/settings.js";
 
@@ -32,5 +33,29 @@ describe("system settings schema", () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+
+  it("defaults bugfix automation to manual review", () => {
+    expect(DEFAULT_SYSTEM_SETTINGS.security.bugfixAutomationMode).toBe("manual");
+    expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalPolicy).toBe(
+      "on-request",
+    );
+    expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalsReviewer).toBe(
+      "user",
+    );
+  });
+
+  it("fills missing security fields from defaults", () => {
+    const merged = mergeSystemSettings({
+      security: {
+        analyzeApprovalPolicy: "never",
+        analyzeApprovalsReviewer: "auto_review",
+        implementApprovalPolicy: "never",
+        implementApprovalsReviewer: "auto_review",
+      },
+    });
+    expect(merged.security.bugfixAutomationMode).toBe("manual");
+    expect(merged.security.analyzeApprovalPolicy).toBe("never");
+    expect(merged.agent).toEqual(DEFAULT_SYSTEM_SETTINGS.agent);
   });
 });

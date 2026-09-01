@@ -14,7 +14,6 @@ import {
   type Conversation,
   type ConversationApproval,
   type ConversationClarification,
-  type ConversationEvent,
   type ConversationItem,
 } from "./api.js";
 import { useConversationEvents } from "./use-conversation-events.js";
@@ -580,30 +579,6 @@ export function PendingPanel({
         ))}
       </div>
     </div>
-  );
-}
-
-function ActivityInspector({ events }: { events: ConversationEvent[] }) {
-  return (
-    <details className="conversation-tool-block activity-inspector">
-      <summary>
-        <span className="block-label">事件日志</span>
-        <span className="muted">{events.length} 条</span>
-      </summary>
-      <div className="activity-list">
-        {events.length === 0 ? (
-          <p className="muted">暂无事件。</p>
-        ) : (
-          events.map((event) => (
-            <div className="activity-row" key={`${event.seq}-${event.id ?? event.method}`}>
-              <span className="mono">{event.seq}</span>
-              <span className="mono">{event.kind || event.method}</span>
-              <span className="muted">{formatDate(event.emittedAtMs ?? event.createdAt)}</span>
-            </div>
-          ))
-        )}
-      </div>
-    </details>
   );
 }
 
@@ -1225,7 +1200,6 @@ export function ConversationPage() {
   const navigate = useNavigate();
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [items, setItems] = useState<ConversationItem[]>([]);
-  const [events, setEvents] = useState<ConversationEvent[]>([]);
   const [approvals, setApprovals] = useState<ConversationApproval[]>([]);
   const [clarification, setClarification] =
     useState<ConversationClarification | null>(null);
@@ -1305,16 +1279,14 @@ export function ConversationPage() {
           // Sync is best-effort; local DB history remains authoritative.
         }
       }
-      const [nextItems, nextEvents, nextApprovals, nextClarification] =
+      const [nextItems, nextApprovals, nextClarification] =
         await Promise.all([
           api.listConversationItems(conversationId),
-          api.listConversationEvents(conversationId),
           api.listConversationApprovals(conversationId),
           api.getConversationClarification(conversationId),
         ]);
       setConversation(nextConversation);
       setItems(nextItems);
-      setEvents(nextEvents);
       setApprovals(nextApprovals);
       setClarification(nextClarification);
       setError("");
@@ -1806,8 +1778,6 @@ export function ConversationPage() {
           onDecide={(decision) => decideApproval(approval.id, decision)}
         />
       ))}
-
-      <ActivityInspector events={events} />
 
       <MessageTimeline
         key={conversationId}

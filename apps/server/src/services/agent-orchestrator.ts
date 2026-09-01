@@ -177,13 +177,16 @@ export class AgentOrchestrator {
         instructionSources: project.instructionSources,
       });
 
-    const runtime = new AppServerRuntime({
-      codexBin: this.getCodexBin(),
-      cwd: worktree.path,
-      approvalMode: "decline",
-    }).start();
-    this.trackRuntime(taskId, runtime);
-    runtime.onServerRequest = async (message) => {
+      const runtime = new AppServerRuntime({
+        codexBin: this.getCodexBin(),
+        cwd: worktree.path,
+        approvalMode:
+          this.getSystemSettings().security.bugfixAutomationMode === "auto"
+            ? "accept"
+            : "decline",
+      }).start();
+      this.trackRuntime(taskId, runtime);
+      runtime.onServerRequest = async (message) => {
         if (message.method === "item/tool/requestUserInput") {
           const params = (message.params ?? {}) as {
             threadId?: string;
@@ -211,78 +214,78 @@ export class AgentOrchestrator {
       ).attach(runtime);
 
       try {
-      await runtime.initialize({
-        name: "bugfix-harness",
-        title: "Bugfix Harness",
-        version: "0.1.0",
-      });
-      const settings = this.getSystemSettings();
-      await runtime.startThread({
-        cwd: worktree.path,
-        sandbox: "read-only",
-        approvalPolicy: settings.security.analyzeApprovalPolicy,
-        approvalsReviewer: settings.security.analyzeApprovalsReviewer,
-        ephemeral: false,
-        developerInstructions: developerInstructions || undefined,
-      });
-      await runtime.startTurn({
-        threadId: runtime.currentThreadId!,
-        input: [
-          {
-            type: "text",
-            text: [
-              buildAnalyzePrompt(
-                contract,
-                this.promptTemplates.get("analyze"),
-              ),
-              "",
-              "Your final message must be a JSON object with exactly these keys:",
-              "problemSummary, rootCauseHypothesis, evidence, proposedFiles, fixStrategy, regressionTests, validationCommands, risks, openQuestions.",
-              "Use repository-relative file paths in proposedFiles.",
-            ].join("\n"),
+        await runtime.initialize({
+          name: "bugfix-harness",
+          title: "Bugfix Harness",
+          version: "0.1.0",
+        });
+        const settings = this.getSystemSettings();
+        await runtime.startThread({
+          cwd: worktree.path,
+          sandbox: "read-only",
+          approvalPolicy: settings.security.analyzeApprovalPolicy,
+          approvalsReviewer: settings.security.analyzeApprovalsReviewer,
+          ephemeral: false,
+          developerInstructions: developerInstructions || undefined,
+        });
+        await runtime.startTurn({
+          threadId: runtime.currentThreadId!,
+          input: [
+            {
+              type: "text",
+              text: [
+                buildAnalyzePrompt(
+                  contract,
+                  this.promptTemplates.get("analyze"),
+                ),
+                "",
+                "Your final message must be a JSON object with exactly these keys:",
+                "problemSummary, rootCauseHypothesis, evidence, proposedFiles, fixStrategy, regressionTests, validationCommands, risks, openQuestions.",
+                "Use repository-relative file paths in proposedFiles.",
+              ].join("\n"),
+            },
+          ],
+          outputSchema: planOutputSchema,
+          approvalPolicy: settings.security.analyzeApprovalPolicy,
+          approvalsReviewer: settings.security.analyzeApprovalsReviewer,
+          model: settings.models.bugfixModel ?? null,
+          effort: settings.models.bugfixReasoningEffort ?? null,
+          sandboxPolicy: {
+            type: "readOnly",
+            networkAccess: false,
           },
-        ],
-        outputSchema: planOutputSchema,
-        approvalPolicy: settings.security.analyzeApprovalPolicy,
-        approvalsReviewer: settings.security.analyzeApprovalsReviewer,
-        model: settings.models.bugfixModel ?? null,
-        effort: settings.models.bugfixReasoningEffort ?? null,
-        sandboxPolicy: {
-          type: "readOnly",
-          networkAccess: false,
-        },
-      });
-      await runtime.waitForTurnCompletion({
-        idleTimeoutMs: settings.agent.analysisIdleTimeoutMs,
-        maxTimeoutMs: settings.agent.analysisMaxDurationMs,
-      });
+        });
+        await runtime.waitForTurnCompletion({
+          idleTimeoutMs: settings.agent.analysisIdleTimeoutMs,
+          maxTimeoutMs: settings.agent.analysisMaxDurationMs,
+        });
 
-      const agentText = runtime.getAgentText();
-      let plan: RepairPlan;
-      try {
-        plan = planSchema.parse(
-          coerceRepairPlan(JSON.parse(extractJsonText(agentText)), [
-            worktree.path,
-            project.repoPath,
-          ]),
-        );
-      } catch (error) {
-        throw new Error(
-          `Failed to parse repair plan from agent output: ${
-            (error as Error).message
-          }\n${agentText.slice(0, 2000)}`,
-        );
-      }
-      this.workflow.submitPlan(taskId, plan);
-      this.sessions.create({
-        taskId,
-        codexThreadId: runtime.currentThreadId!,
-      });
-      return plan;
+        const agentText = runtime.getAgentText();
+        let plan: RepairPlan;
+        try {
+          plan = planSchema.parse(
+            coerceRepairPlan(JSON.parse(extractJsonText(agentText)), [
+              worktree.path,
+              project.repoPath,
+            ]),
+          );
+        } catch (error) {
+          throw new Error(
+            `Failed to parse repair plan from agent output: ${
+              (error as Error).message
+            }\n${agentText.slice(0, 2000)}`,
+          );
+        }
+        this.workflow.submitPlan(taskId, plan);
+        this.sessions.create({
+          taskId,
+          codexThreadId: runtime.currentThreadId!,
+        });
+        return plan;
       } finally {
         this.untrackRuntime(taskId, runtime);
         detach();
-        runtime.close();
+        await runtime.closeAndWait();
       }
     } catch (error) {
       if (this.tasks.get(taskId)?.status === "ANALYZING") {
@@ -327,7 +330,10 @@ export class AgentOrchestrator {
     const runtime = new AppServerRuntime({
       codexBin: this.getCodexBin(),
       cwd: worktree.path,
-      approvalMode: "decline",
+      approvalMode:
+        this.getSystemSettings().security.bugfixAutomationMode === "auto"
+          ? "accept"
+          : "decline",
     }).start();
     this.trackRuntime(taskId, runtime);
     const detach = new RuntimeEventRecorder(
@@ -440,12 +446,14 @@ export class AgentOrchestrator {
       });
       const output = runtime.getAgentText();
       this.workflow.transitionTask(taskId, "VALIDATING");
-      void this.execution.runValidations(taskId).catch((error) => {
-        console.error(
-          `Auto-validation failed for task ${taskId}:`,
-          (error as Error).message,
-        );
-      });
+      if (this.getSystemSettings().security.bugfixAutomationMode !== "auto") {
+        void this.execution.runValidations(taskId).catch((error) => {
+          console.error(
+            `Auto-validation failed for task ${taskId}:`,
+            (error as Error).message,
+          );
+        });
+      }
       return output;
     } catch (error) {
       if (this.tasks.get(taskId)?.status === "IMPLEMENTING") {

@@ -184,6 +184,109 @@ describe("ConversationInteractionCoordinator", () => {
     await expect(responsePromise).resolves.toEqual({ decision: "accept" });
   });
 
+  it("replays only the originally granted permissions for the session", async () => {
+    const db = openDatabase(":memory:");
+    const conversationId = createConversationId(db);
+    const sessionApprovals = new Map();
+    const coordinator = new ConversationInteractionCoordinator(
+      conversationId,
+      new ConversationApprovalRepository(db),
+      new ConversationClarificationRepository(db),
+      new EventBus(),
+      DEFAULT_CONVERSATION_POLICY,
+      new DynamicToolRegistry(tmpdir()),
+      null,
+      sessionApprovals,
+      (grant) => sessionApprovals.set(grant.key, grant),
+    );
+
+    const first = coordinator.handleServerRequest({
+      method: "item/permissions/requestApproval",
+      id: 30,
+      params: { permissions: { network: { enabled: true } } },
+    });
+    const firstApproval = new ConversationApprovalRepository(
+      db,
+    ).listByConversation(conversationId)[0];
+    coordinator.decideApproval(firstApproval.id, "acceptForSession");
+    await expect(first).resolves.toEqual({
+      permissions: { network: { enabled: true } },
+      scope: "session",
+    });
+
+    const broader = coordinator.handleServerRequest({
+      method: "item/permissions/requestApproval",
+      id: 31,
+      params: {
+        permissions: { network: { enabled: true }, fs: { write: true } },
+      },
+    });
+    const pending = new ConversationApprovalRepository(db)
+      .listByConversation(conversationId)
+      .find((row) => !row.decision);
+    expect(pending).toBeDefined();
+    coordinator.decideApproval(pending!.id, "decline");
+    await expect(broader).resolves.toEqual({
+      permissions: {},
+      scope: "turn",
+    });
+
+    await expect(
+      coordinator.handleServerRequest({
+        method: "item/permissions/requestApproval",
+        id: 32,
+        params: { permissions: { network: { enabled: true } } },
+      }),
+    ).resolves.toEqual({
+      permissions: { network: { enabled: true } },
+      scope: "session",
+    });
+  });
+
+  it("only auto-accepts the same command for the session", async () => {
+    const db = openDatabase(":memory:");
+    const conversationId = createConversationId(db);
+    const coordinator = new ConversationInteractionCoordinator(
+      conversationId,
+      new ConversationApprovalRepository(db),
+      new ConversationClarificationRepository(db),
+      new EventBus(),
+      DEFAULT_CONVERSATION_POLICY,
+      new DynamicToolRegistry(tmpdir()),
+    );
+
+    const first = coordinator.handleServerRequest({
+      method: "item/commandExecution/requestApproval",
+      id: 40,
+      params: { command: "npm test", kind: "command", cwd: "/repo" },
+    });
+    const approval = new ConversationApprovalRepository(db).listByConversation(
+      conversationId,
+    )[0];
+    coordinator.decideApproval(approval.id, "acceptForSession");
+    await expect(first).resolves.toEqual({ decision: "acceptForSession" });
+
+    await expect(
+      coordinator.handleServerRequest({
+        method: "item/commandExecution/requestApproval",
+        id: 41,
+        params: { command: "npm test", kind: "command", cwd: "/repo" },
+      }),
+    ).resolves.toEqual({ decision: "acceptForSession" });
+
+    const other = coordinator.handleServerRequest({
+      method: "item/commandExecution/requestApproval",
+      id: 42,
+      params: { command: "rm -rf /", kind: "command", cwd: "/repo" },
+    });
+    const pending = new ConversationApprovalRepository(db)
+      .listByConversation(conversationId)
+      .find((row) => !row.decision);
+    expect(pending).toBeDefined();
+    coordinator.decideApproval(pending!.id, "decline");
+    await expect(other).resolves.toEqual({ decision: "decline" });
+  });
+
   it("rejects symlink paths that escape the project root", async () => {
     const root = mkdtempSync(join(tmpdir(), "conversation-tool-root-"));
     const outside = mkdtempSync(join(tmpdir(), "conversation-tool-outside-"));

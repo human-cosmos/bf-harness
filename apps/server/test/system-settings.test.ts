@@ -8,6 +8,8 @@ import { openDatabase } from "../src/db.js";
 import { BugfixService } from "../src/services/bugfix-service.js";
 import { EventBus } from "../src/services/event-bus.js";
 import { SystemSettingsService } from "../src/services/system-settings-service.js";
+import { SystemSettingsRepository } from "../src/repositories/system-settings-repository.js";
+import type { SystemSettings } from "@bugfix-harness/shared";
 
 async function createApp() {
   const db = openDatabase(":memory:");
@@ -138,6 +140,34 @@ describe("system settings service", () => {
       const second = openDatabase(dbPath);
       const secondService = new SystemSettingsService(second);
       expect(secondService.get().remote.cloneTimeoutMs).toBe(123_456);
+      second.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("merges newly added security fields into previously saved settings", () => {
+    const root = mkdtempSync(join(tmpdir(), "bugfix-settings-legacy-"));
+    const dbPath = join(root, "data.sqlite");
+    try {
+      const first = openDatabase(dbPath);
+      const legacy = {
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          conversationDefaults: DEFAULT_SYSTEM_SETTINGS.security.conversationDefaults,
+          analyzeApprovalPolicy: "never",
+          analyzeApprovalsReviewer: "auto_review",
+          implementApprovalPolicy: "never",
+          implementApprovalsReviewer: "auto_review",
+        },
+      };
+      new SystemSettingsRepository(first).save(legacy as SystemSettings);
+      first.close();
+
+      const second = openDatabase(dbPath);
+      const loaded = new SystemSettingsService(second).get();
+      expect(loaded.security.bugfixAutomationMode).toBe("manual");
+      expect(loaded.security.analyzeApprovalPolicy).toBe("never");
       second.close();
     } finally {
       rmSync(root, { recursive: true, force: true });

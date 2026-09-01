@@ -1,5 +1,6 @@
 import type { AppDatabase } from "../db.js";
 import { randomUUID } from "node:crypto";
+import type { BugfixAutomationMode } from "@bugfix-harness/shared";
 import { ApprovalRequestRepository } from "../repositories/approval-request-repository.js";
 import { DeliveryReportRepository } from "../repositories/delivery-report-repository.js";
 import { PlanApprovalRepository } from "../repositories/plan-approval-repository.js";
@@ -13,6 +14,7 @@ import {
   type ApprovalRequest,
   type RiskLevel,
 } from "./approval-policy.js";
+import { resolveValidationCommands } from "./validation-command-infer.js";
 import { DeliveryReportService } from "./delivery-report-service.js";
 import { DiffService } from "./diff-service.js";
 import { EventBus } from "./event-bus.js";
@@ -44,6 +46,7 @@ export class ExecutionService {
     private readonly worktrees: WorktreeRepository,
     private readonly plans: PlanApprovalRepository,
     private readonly events?: EventBus,
+    private readonly getAutomationMode: () => BugfixAutomationMode = () => "manual",
   ) {
     this.approvals = new ApprovalRequestRepository(db);
     this.validationResults = new ValidationResultRepository(db);
@@ -148,7 +151,11 @@ export class ExecutionService {
       payload: { approvalId: approval.id, method: request.kind },
     });
 
-    if (decision.level === "autoAllow") {
+    const shouldAutoAccept =
+      decision.level === "autoAllow" ||
+      (decision.level === "prompt" && this.getAutomationMode() === "auto");
+
+    if (shouldAutoAccept) {
       this.approvals.decide(approval.id, "accept");
       this.events?.publish({
         type: "approval.decided",
@@ -262,8 +269,12 @@ export class ExecutionService {
     const outcomes: ValidationOutcome[] = [];
     const validationRunId = randomUUID();
 
-    for (const command of project.validationCommands) {
-      const outcome = await this.validationRunner.run(command, worktree.path);
+    const resolvedCommands = resolveValidationCommands(
+      worktree.path,
+      project.validationCommands,
+    );
+    for (const entry of resolvedCommands) {
+      const outcome = await this.validationRunner.run(entry.command, entry.cwd);
       this.validationResults.save(taskId, outcome, undefined, validationRunId);
       outcomes.push(outcome);
     }

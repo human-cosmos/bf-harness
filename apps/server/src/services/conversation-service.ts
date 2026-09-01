@@ -29,6 +29,7 @@ import { ConversationEventIngestor } from "./conversation-event-ingestor.js";
 import {
   ConversationInteractionCoordinator,
   type ConversationApprovalDecision,
+  type SessionApprovalGrant,
 } from "./conversation-interaction-coordinator.js";
 import { DynamicToolRegistry } from "./dynamic-tool-registry.js";
 import { EventBus } from "./event-bus.js";
@@ -90,6 +91,10 @@ export class ConversationService {
   private readonly activeCoordinators = new Map<
     string,
     ConversationInteractionCoordinator
+  >();
+  private readonly sessionApprovals = new Map<
+    string,
+    Map<string, SessionApprovalGrant>
   >();
   private readonly activeTurnIds = new Set<string>();
   private readonly timeoutMs: number;
@@ -246,6 +251,7 @@ export class ConversationService {
     await this.runtimeManager.interrupt(id);
     this.activeCoordinators.get(id)?.cancelPending();
     this.activeCoordinators.delete(id);
+    this.sessionApprovals.delete(id);
     this.activeTurnIds.delete(id);
     const deleted = this.conversations.delete(id);
     this.eventsBus.publish({
@@ -610,6 +616,9 @@ export class ConversationService {
     conversation: Conversation,
     projectRoot: string,
   ): void {
+    const sessionApprovals =
+      this.sessionApprovals.get(conversationId) ?? new Map();
+    this.sessionApprovals.set(conversationId, sessionApprovals);
     const coordinator = new ConversationInteractionCoordinator(
       conversationId,
       this.approvals,
@@ -618,6 +627,8 @@ export class ConversationService {
       conversation.policy,
       new DynamicToolRegistry(projectRoot),
       this.getSystemSettings?.().agent.approvalTtlMs ?? this.approvalTimeoutMs,
+      sessionApprovals,
+      (grant) => sessionApprovals.set(grant.key, grant),
     );
     this.activeCoordinators.set(conversationId, coordinator);
     runtime.onServerRequest = (message) =>

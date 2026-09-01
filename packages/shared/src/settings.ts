@@ -29,11 +29,14 @@ export interface ModelSystemSettings {
 
 export interface SecuritySystemSettings {
   conversationDefaults: ConversationPolicy;
+  bugfixAutomationMode: BugfixAutomationMode;
   analyzeApprovalPolicy: ConversationApprovalPolicy;
   analyzeApprovalsReviewer: ConversationApprovalsReviewer;
   implementApprovalPolicy: ConversationApprovalPolicy;
   implementApprovalsReviewer: ConversationApprovalsReviewer;
 }
+
+export type BugfixAutomationMode = "manual" | "auto";
 
 export interface ProjectDefaultsSystemSettings {
   instructionSources: string[];
@@ -87,6 +90,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   },
   security: {
     conversationDefaults: { ...DEFAULT_CONVERSATION_POLICY },
+    bugfixAutomationMode: "manual",
     analyzeApprovalPolicy: "on-request",
     analyzeApprovalsReviewer: "user",
     implementApprovalPolicy: "on-request",
@@ -94,20 +98,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   },
   projectDefaults: {
     instructionSources: ["AGENTS.md"],
-    validationCommands: [
-      {
-        id: "test",
-        label: "运行测试",
-        command: ["npm", "test"],
-        timeoutSec: 300,
-      },
-      {
-        id: "typecheck",
-        label: "类型检查",
-        command: ["npm", "run", "typecheck"],
-        timeoutSec: 300,
-      },
-    ],
+    validationCommands: [],
     allowedPaths: ["src/", "test/"],
     forbiddenPaths: ["node_modules/"],
     newValidationCommand: {
@@ -155,6 +146,7 @@ export const modelSystemSettingsSchema = z.object({
 
 export const securitySystemSettingsSchema = z.object({
   conversationDefaults: conversationPolicySchema,
+  bugfixAutomationMode: z.enum(["manual", "auto"]).default("manual"),
   analyzeApprovalPolicy: z.enum([
     "on-request",
     "never",
@@ -213,3 +205,51 @@ export const systemSettingsSchema = z.object({
   remote: remoteSystemSettingsSchema,
   runtime: runtimeSystemSettingsSchema,
 });
+
+function omitUndefined<T extends object>(value: T | undefined | null): Partial<T> {
+  if (!value) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined),
+  ) as Partial<T>;
+}
+
+export function mergeSystemSettings(
+  stored: unknown,
+  defaults: SystemSettings = DEFAULT_SYSTEM_SETTINGS,
+): SystemSettings {
+  const value =
+    stored && typeof stored === "object"
+      ? (stored as Partial<SystemSettings>)
+      : {};
+  const security = omitUndefined(value.security);
+  const merged = {
+    ...defaults,
+    ...omitUndefined(value),
+    agent: { ...defaults.agent, ...omitUndefined(value.agent) },
+    models: { ...defaults.models, ...omitUndefined(value.models) },
+    security: {
+      ...defaults.security,
+      ...security,
+      conversationDefaults: {
+        ...defaults.security.conversationDefaults,
+        ...omitUndefined(
+          (security.conversationDefaults ??
+            value.security?.conversationDefaults) as
+            | ConversationPolicy
+            | undefined,
+        ),
+      },
+    },
+    projectDefaults: {
+      ...defaults.projectDefaults,
+      ...omitUndefined(value.projectDefaults),
+    },
+    storage: { ...defaults.storage, ...omitUndefined(value.storage) },
+    remote: { ...defaults.remote, ...omitUndefined(value.remote) },
+    runtime: { ...defaults.runtime, ...omitUndefined(value.runtime) },
+  };
+  const parsed = systemSettingsSchema.safeParse(merged);
+  return parsed.success ? parsed.data : structuredClone(defaults);
+}
