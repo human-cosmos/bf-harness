@@ -15,7 +15,7 @@ Minimal runnable check that the local Harness can drive `codex-harness app-serve
 ## Requirements
 
 - Node.js 22+
-- `codex-harness` on `PATH`
+- `codex-harness` or official `codex` on `PATH`（Windows 会解析 npm 的 `codex.exe`）
 
 The previous setup already built and symlinked the binary as `codex-harness`.
 

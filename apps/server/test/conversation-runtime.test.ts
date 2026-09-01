@@ -26,7 +26,7 @@ describe("conversation AppServerRuntime extensions", () => {
     expect(calls.map((call) => call.method)).toEqual([
       "thread/read",
       "thread/turns/list",
-      "thread/items/list",
+      "thread/turns/items/list",
       "thread/fork",
       "thread/archive",
       "thread/name/set",
@@ -37,6 +37,23 @@ describe("conversation AppServerRuntime extensions", () => {
     ]);
     expect(calls[2].params).toMatchObject({ turnId: "turn-1" });
     expect(calls[8].params).toMatchObject({ query: "app.ts" });
+  });
+
+  it("falls back to thread/items/list when official Codex method is unknown", async () => {
+    const runtime = new AppServerRuntime();
+    const methods: string[] = [];
+    runtime.rpc = async (method: string) => {
+      methods.push(method);
+      if (method === "thread/turns/items/list") {
+        throw new Error(
+          'thread/turns/items/list: {"code":-32600,"message":"unknown variant `thread/turns/items/list`"}',
+        );
+      }
+      return { data: [] };
+    };
+
+    await runtime.listItems("thread-1", { turnId: "turn-1" });
+    expect(methods).toEqual(["thread/turns/items/list", "thread/items/list"]);
   });
 
   it("passes model, effort and sandbox policy through startTurn", async () => {

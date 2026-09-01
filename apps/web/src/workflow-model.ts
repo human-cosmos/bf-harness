@@ -285,6 +285,7 @@ export type NextActionKey =
   | "start-implement"
   | "handle-approvals"
   | "continue-fix"
+  | "validate"
   | "build-report"
   | "accept-task"
   | "rework-task"
@@ -405,11 +406,12 @@ export function nextActionForState(state: WorkflowState): NextAction {
 
   if (status === "BLOCKED") {
     return {
-      key: "none",
-      label: "任务受阻",
-      description: "请查看任务详情和实时事件了解原因。",
-      href: `/tasks/${state.task.id}`,
-      primary: false,
+      key: "validate",
+      label: "重新运行检查",
+      description:
+        "自动修复已达上限。请先查看失败原因；若是环境问题（例如 Windows 上找不到 npm），修复后可手动重新运行检查。",
+      href: `/tasks/${state.task.id}/diff#validation-action`,
+      primary: true,
     };
   }
 

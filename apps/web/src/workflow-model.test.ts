@@ -196,6 +196,16 @@ describe("workflow model", () => {
     expect(next.caption).toBe("检查未通过 · 等待你继续修复");
   });
 
+  it("offers a manual re-run when the task is blocked", () => {
+    const next = nextActionForState(
+      state({
+        task: { ...state().task, status: "BLOCKED" },
+      }),
+    );
+    expect(next.key).toBe("validate");
+    expect(next.href).toContain("/diff#validation-action");
+  });
+
   it("overrides the badge while implementation is actually running", () => {
     const next = effectiveStatusForState(
       state({

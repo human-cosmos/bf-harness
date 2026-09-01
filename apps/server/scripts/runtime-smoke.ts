@@ -1,7 +1,6 @@
 import { AppServerRuntime } from "../src/services/app-server-runtime.js";
 
 const runtime = new AppServerRuntime({
-  codexBin: process.env.CODEX_BIN ?? "codex-harness",
   cwd: process.env.SPIKE_WORKSPACE ?? process.cwd(),
   approvalMode: "decline",
   timeoutMs: 120_000,

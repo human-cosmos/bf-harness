@@ -12,6 +12,7 @@ import type { BugfixService } from "./services/bugfix-service.js";
 import { DiskMonitor } from "./services/disk-monitor.js";
 import { DynamicToolRegistry } from "./services/dynamic-tool-registry.js";
 import { redactSensitive } from "./services/redaction.js";
+import { inferValidationCommands } from "./services/validation-command-infer.js";
 
 function contentTypeFor(filePath: string): string {
   switch (extname(filePath).toLowerCase()) {
@@ -429,6 +430,40 @@ export async function buildApp(service: BugfixService) {
         ).length,
       };
     });
+  });
+
+  app.get("/api/projects/validation-preview", async (request, reply) => {
+    const repoPath = String(
+      (request.query as { repoPath?: string }).repoPath ?? "",
+    ).trim();
+    if (!repoPath) {
+      return reply.code(400).send({ error: "repoPath is required" });
+    }
+    return {
+      commands: inferValidationCommands(repoPath),
+    };
+  });
+
+  app.get("/api/projects/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = service.projects.get(id);
+    if (!project) {
+      return reply.code(404).send({ error: "Project not found" });
+    }
+    return project;
+  });
+
+  app.patch("/api/projects/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      return service.updateProject(id, request.body);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message === "Project not found") {
+        return reply.code(404).send({ error: message });
+      }
+      return reply.code(400).send({ error: message });
+    }
   });
 
   app.post("/api/projects", async (request, reply) => {

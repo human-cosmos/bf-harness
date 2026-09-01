@@ -47,6 +47,16 @@ export interface ConversationServiceOptions {
   getSystemSettings?: () => SystemSettings;
 }
 
+function isThreadItemsListUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("not supported yet") ||
+    message.includes("unknown variant `thread/items/list`") ||
+    message.includes("unknown variant `thread/turns/items/list`") ||
+    message.includes("Method not found")
+  );
+}
+
 function buildProtocolInput(message: SendConversationMessageInput): unknown[] {
   const parts: unknown[] = [
     {
@@ -783,35 +793,59 @@ export class ConversationService {
     threadId: string,
     turnId: string,
   ): Promise<Array<Record<string, unknown>>> {
-    const items: Array<Record<string, unknown>> = [];
-    let cursor: string | null = null;
+    try {
+      const items: Array<Record<string, unknown>> = [];
+      let cursor: string | null = null;
 
-    for (let page = 0; page < 100; page += 1) {
-      const result = (await runtime.listItems(threadId, {
-        turnId,
-        cursor,
-        limit: 1000,
-      })) as {
-        data?: Array<{
-          turnId?: string;
-          item?: Record<string, unknown>;
-        }>;
-        nextCursor?: string | null;
-      };
-      if (Array.isArray(result?.data)) {
-        for (const entry of result.data) {
-          if (entry?.item && typeof entry.item === "object") {
-            items.push(entry.item);
+      for (let page = 0; page < 100; page += 1) {
+        const result = (await runtime.listItems(threadId, {
+          turnId,
+          cursor,
+          limit: 1000,
+        })) as {
+          data?: Array<{
+            turnId?: string;
+            item?: Record<string, unknown>;
+          }>;
+          nextCursor?: string | null;
+        };
+        if (Array.isArray(result?.data)) {
+          for (const entry of result.data) {
+            if (entry?.item && typeof entry.item === "object") {
+              items.push(entry.item);
+            }
           }
         }
+        if (!result?.nextCursor) {
+          break;
+        }
+        cursor = result.nextCursor;
       }
-      if (!result?.nextCursor) {
-        break;
-      }
-      cursor = result.nextCursor;
-    }
 
-    return items;
+      return items;
+    } catch (error) {
+      if (!isThreadItemsListUnavailable(error)) {
+        throw error;
+      }
+      return this.listItemsFromThreadRead(runtime, threadId, turnId);
+    }
+  }
+
+  private async listItemsFromThreadRead(
+    runtime: AppServerRuntime,
+    threadId: string,
+    turnId: string,
+  ): Promise<Array<Record<string, unknown>>> {
+    const read = (await runtime.readThread(threadId, true)) as {
+      thread?: {
+        turns?: Array<{
+          id?: string;
+          items?: Array<Record<string, unknown>>;
+        }>;
+      };
+    };
+    const turn = read.thread?.turns?.find((item) => item.id === turnId);
+    return Array.isArray(turn?.items) ? turn.items : [];
   }
 
   private normalizeTurnStatus(

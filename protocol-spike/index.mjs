@@ -198,6 +198,7 @@ async function main() {
         title: "Bugfix Harness Protocol Spike",
         version: "0.1.0",
       },
+      capabilities: { experimentalApi: true },
     });
     notify("initialized");
 

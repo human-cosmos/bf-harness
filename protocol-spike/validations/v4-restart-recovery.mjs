@@ -50,11 +50,42 @@ try {
   });
   const loaded = await secondClient.rpc("thread/loaded/list", {});
   const turns = await secondClient.rpc("thread/turns/list", { threadId });
-  const items = await secondClient.rpc("thread/items/list", { threadId });
+  let items = { data: [] };
+  try {
+    items = await secondClient.rpc("thread/turns/items/list", {
+      threadId,
+      turnId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      !message.includes("unknown variant `thread/turns/items/list`") &&
+      !message.includes("not supported yet")
+    ) {
+      throw error;
+    }
+    try {
+      items = await secondClient.rpc("thread/items/list", { threadId });
+    } catch (fallbackError) {
+      const fallbackMessage =
+        fallbackError instanceof Error
+          ? fallbackError.message
+          : String(fallbackError);
+      if (
+        !fallbackMessage.includes("unknown variant `thread/items/list`") &&
+        !fallbackMessage.includes("not supported yet")
+      ) {
+        throw fallbackError;
+      }
+    }
+  }
 
   const recovered = read.thread?.id === threadId;
   const hasTurn = turns.data?.some((turn) => turn.id === turnId) ?? false;
-  const hasItem = (items.data?.length ?? 0) > 0;
+  const itemsFromRead = (read.thread?.turns ?? []).flatMap(
+    (turn) => (Array.isArray(turn.items) ? turn.items : []),
+  );
+  const hasItem = (items.data?.length ?? 0) > 0 || itemsFromRead.length > 0;
   const notLoaded = !(loaded.data ?? []).includes(threadId);
 
   console.log("[v4] recovery-evidence", {

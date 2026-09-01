@@ -1,8 +1,94 @@
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { EventEmitter } from "node:events";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_COMMANDS = ["codex-harness", "codex"];
+
+function officialVendorBinary(shimPath) {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const name = basename(shimPath).toLowerCase();
+  if (name !== "codex" && name !== "codex.cmd" && name !== "codex.bat") {
+    return null;
+  }
+
+  const nodeDir = dirname(shimPath);
+  const triple =
+    process.arch === "arm64"
+      ? "aarch64-pc-windows-msvc"
+      : "x86_64-pc-windows-msvc";
+  const pkg =
+    process.arch === "arm64" ? "codex-win32-arm64" : "codex-win32-x64";
+  const candidates = [
+    join(
+      nodeDir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "node_modules",
+      "@openai",
+      pkg,
+      "vendor",
+      triple,
+      "bin",
+      "codex.exe",
+    ),
+    join(
+      nodeDir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "vendor",
+      triple,
+      "bin",
+      "codex.exe",
+    ),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+function pathCandidates(commandName) {
+  const pathValue = process.env.PATH ?? "";
+  const paths = [];
+  for (const dir of pathValue.split(process.platform === "win32" ? ";" : ":")) {
+    if (!dir) continue;
+    paths.push(join(dir, commandName));
+    if (process.platform === "win32") {
+      paths.push(join(dir, `${commandName}.exe`));
+      paths.push(join(dir, `${commandName}.cmd`));
+      paths.push(join(dir, `${commandName}.bat`));
+    }
+  }
+  return paths;
+}
+
+function resolveCodexBin(explicit) {
+  const requested = (explicit ?? process.env.CODEX_BIN ?? "").trim();
+  const names = requested ? [requested] : DEFAULT_COMMANDS;
+  for (const name of names) {
+    const candidates = existsSync(name) ? [name] : pathCandidates(name);
+    for (const candidate of candidates) {
+      if (!existsSync(candidate)) continue;
+      return officialVendorBinary(candidate) ?? candidate;
+    }
+    if (existsSync(name)) {
+      return officialVendorBinary(name) ?? name;
+    }
+  }
+  return requested || DEFAULT_COMMANDS[0];
+}
+
+function usesWindowsShell(command) {
+  return process.platform === "win32" && /\.(cmd|bat)$/i.test(command);
+}
+
+function quoteWindowsCommand(command) {
+  return `"${command.replace(/"/g, '""')}"`;
+}
 
 function responseForApproval(method, mode) {
   if (mode === "accept") {
@@ -38,14 +124,14 @@ function responseForApproval(method, mode) {
 
 export class AppServerClient extends EventEmitter {
   constructor({
-    codexBin = "codex-harness",
+    codexBin,
     cwd = process.cwd(),
     approvalMode = "decline",
     timeoutMs = DEFAULT_TIMEOUT_MS,
     log = (..._args) => {},
   } = {}) {
     super();
-    this.codexBin = codexBin;
+    this.codexBin = resolveCodexBin(codexBin);
     this.cwd = cwd;
     this.approvalMode = approvalMode;
     this.timeoutMs = timeoutMs;
@@ -58,21 +144,54 @@ export class AppServerClient extends EventEmitter {
     this.currentTurnId = null;
     this.turnCompletions = [];
     this.onServerRequest = null;
+    this.childError = null;
+  }
+
+  failPending(error) {
+    this.childError = error;
+    for (const [id, entry] of this.pending) {
+      this.pending.delete(id);
+      entry.reject(error);
+    }
   }
 
   start() {
-    this.child = spawn(this.codexBin, ["app-server", "--stdio"], {
-      cwd: this.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "inherit"],
-      windowsHide: true,
-    });
+    const useShell = usesWindowsShell(this.codexBin);
+    this.child = useShell
+      ? spawn(
+          `${quoteWindowsCommand(this.codexBin)} app-server --stdio`,
+          {
+            cwd: this.cwd,
+            env: process.env,
+            stdio: ["pipe", "pipe", "inherit"],
+            windowsHide: true,
+            shell: true,
+          },
+        )
+      : spawn(this.codexBin, ["app-server", "--stdio"], {
+          cwd: this.cwd,
+          env: process.env,
+          stdio: ["pipe", "pipe", "inherit"],
+          windowsHide: true,
+        });
+
+    this.log("codex-bin", this.codexBin);
 
     this.child.on("error", (error) => {
+      this.failPending(
+        new Error(`failed to start ${this.codexBin}: ${error.message}`),
+      );
       this.emit("childError", error);
     });
 
     this.child.on("exit", (code, signal) => {
+      if (this.pending.size > 0) {
+        this.failPending(
+          new Error(
+            `${this.codexBin} exited before handshake (code=${code}, signal=${signal})`,
+          ),
+        );
+      }
       this.emit("exit", { code, signal });
     });
 
@@ -105,6 +224,9 @@ export class AppServerClient extends EventEmitter {
   }
 
   rpc(method, params = {}) {
+    if (this.childError) {
+      return Promise.reject(this.childError);
+    }
     const id = this.nextRequestId++;
     const envelope = { method, id, params };
     this.send(envelope);
@@ -201,7 +323,10 @@ export class AppServerClient extends EventEmitter {
   }
 
   async initialize(clientInfo) {
-    await this.rpc("initialize", { clientInfo });
+    await this.rpc("initialize", {
+      clientInfo,
+      capabilities: { experimentalApi: true },
+    });
     this.notify("initialized");
   }
 

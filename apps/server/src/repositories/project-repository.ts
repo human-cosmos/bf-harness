@@ -96,6 +96,52 @@ export class ProjectRepository {
     return project;
   }
 
+  update(
+    id: string,
+    patch: Partial<
+      Pick<
+        Project,
+        | "name"
+        | "repoPath"
+        | "instructionSources"
+        | "validationCommands"
+        | "allowedPaths"
+        | "forbiddenPaths"
+        | "defaultBranch"
+      >
+    >,
+  ): Project {
+    const existing = this.get(id);
+    if (!existing) {
+      throw new Error("Project not found");
+    }
+    const project: Project = {
+      ...existing,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    this.db
+      .prepare(
+        `UPDATE projects SET
+          name = ?, repo_path = ?, default_branch = ?,
+          instruction_sources = ?, validation_commands = ?,
+          allowed_paths = ?, forbidden_paths = ?, updated_at = ?
+        WHERE id = ?`,
+      )
+      .run(
+        project.name,
+        project.repoPath,
+        project.defaultBranch ?? null,
+        JSON.stringify(project.instructionSources),
+        JSON.stringify(project.validationCommands),
+        JSON.stringify(project.allowedPaths),
+        JSON.stringify(project.forbiddenPaths),
+        project.updatedAt,
+        project.id,
+      );
+    return project;
+  }
+
   delete(id: string): boolean {
     return this.db.prepare("DELETE FROM projects WHERE id = ?").run(id).changes > 0;
   }

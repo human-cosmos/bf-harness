@@ -1,10 +1,9 @@
 import { AppServerRuntime } from "../src/services/app-server-runtime.js";
 
 const runtime = new AppServerRuntime({
-  codexBin: process.env.CODEX_BIN ?? "codex-harness",
   cwd: process.cwd(),
   approvalMode: "decline",
-  timeoutMs: 5_000,
+  timeoutMs: 30_000,
 }).start();
 
 try {

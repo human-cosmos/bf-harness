@@ -394,4 +394,107 @@ describe("BugfixService", () => {
       db.close();
     }
   });
+
+  it("moves a blocked task back to validating when checks are re-run", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      const project = service.projects.create({
+        name: "blocked",
+        repoPath: worktreeRoot,
+        instructionSources: [],
+        validationCommands: [
+          {
+            id: "echo",
+            label: "echo",
+            command: ["node", "-e", "console.log('ok')"],
+            timeoutSec: 10,
+          },
+        ],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+      new WorktreeRepository(db).create({
+        taskId: task.id,
+        projectId: project.id,
+        path: worktreeRoot,
+        baseCommit: "abc123",
+        branch: `harness/${task.id}`,
+      });
+      service.tasks.updateStatus(task.id, "BLOCKED");
+      const job = service.startValidationJob(task.id);
+      expect(service.tasks.get(task.id)?.status).toBe("VALIDATING");
+      await vi.waitUntil(() => service.getJob(job.id)?.status !== "running", {
+        timeout: 5000,
+      });
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("rejects updating a project to a non-git repo path", async () => {
+    const { db, service, worktreeRoot } = createService();
+    const badRepo = mkdtempSync(join(tmpdir(), "bugfix-service-not-git-"));
+    try {
+      const project = service.projects.create({
+        name: "update-invalid",
+        repoPath: "/tmp/demo",
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+
+      await expect(
+        service.updateProject(project.id, { repoPath: badRepo }),
+      ).rejects.toThrow("该目录不是 Git 仓库");
+    } finally {
+      rmSync(badRepo, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("rejects updating a project to another project's repo path", async () => {
+    const { db, service, worktreeRoot } = createService();
+    const repo = mkdtempSync(join(tmpdir(), "bugfix-service-repo-"));
+    try {
+      execFileSync("git", ["init", repo]);
+      const first = service.projects.create({
+        name: "first",
+        repoPath: repo,
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+      const second = service.projects.create({
+        name: "second",
+        repoPath: "/tmp/demo",
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+
+      await expect(
+        service.updateProject(second.id, { repoPath: repo }),
+      ).rejects.toThrow("A project already exists for this repository path");
+      expect(service.projects.get(first.id)?.repoPath).toBe(repo);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
 });

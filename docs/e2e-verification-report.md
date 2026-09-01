@@ -1,5 +1,79 @@
 # Bugfix Harness V1 全页面端到端验证报告
 
+## 2026-09-01 Windows 全量复验（E2E-01–19 / AC-001–005）
+
+执行时间：2026-09-01  
+范围：基线 + 全页面矩阵 + 隔离 Playwright + 真实验收脚本 + 重启恢复。
+
+### 环境
+
+- Windows 11 x64，Node.js v24.13.0，pnpm 11.22.0，Git 2.52.0.windows.1
+- Codex Runtime：官方 `codex-cli 0.142.2`（PATH 上的 `codex`/`codex.cmd` 解析到 native `codex.exe`）
+- 前端：http://127.0.0.1:4318 ；后端：http://127.0.0.1:4317
+
+### 基线与自动检查
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | 通过 |
+| 单元/集成测试 | `pnpm test` | 通过（server 155 / web 35 / shared 36 / protocol 1） |
+| 协议验证 V1–V5 | `cd protocol-spike && npm run validate` | 全部 PASS（修复后复验） |
+| 全页面 UI 冒烟 | `pnpm exec playwright test --config=e2e-live/live.config.ts` | 13 个场景通过 |
+| Playwright E2E | `pnpm e2e` | 9 个场景通过（含 `full-ai-flow` 约 1.1 分钟） |
+| 真实 API 主链路 | `pnpm accept:e2e` | `E2E_ACCEPTANCE_OK`，最终 `ACCEPTED` |
+| 真实对话端到端 | `pnpm accept:conversation` | `CONVERSATION_E2E_OK` |
+| 验收单测 AC-002/003/004/005 | `pnpm accept:unit` | 4 个测试通过 |
+| 崩溃/进程树 | `pnpm accept:crash` | `CRASH_RECOVERY_OK` |
+| 重启恢复 | `pnpm services:restart` + API/页面抽查 | `E2E-19_OK` |
+
+### 逐项验证结果
+
+| 编号 | 页面/能力 | 结果 | 说明 |
+|---|---|---|---|
+| E2E-01 | 基础与导航 | 通过 | e2e-live |
+| E2E-02 | 项目列表 `/` | 通过 | e2e-live |
+| E2E-03 | 添加本地项目 | 通过 | e2e-live |
+| E2E-04 | 添加远程项目 | 通过 | e2e-live |
+| E2E-05 | 项目任务 | 通过 | e2e-live |
+| E2E-06 | 待办中心 | 通过 | e2e-live + 重启后页面 200 |
+| E2E-07 | 新建任务 | 通过 | e2e-live |
+| E2E-08 | 任务详情 | 通过 | e2e-live |
+| E2E-09 | 修复计划 | 通过 | 隔离 Playwright 真实 AI 主链路 |
+| E2E-10 | 操作审批 | 通过 | AC-003 单测 + 审批策略 |
+| E2E-11 | 变更与检查 | 通过 | 真实 AI 主链路 |
+| E2E-12 | 验收报告 | 通过 | 真实 AI 主链路 |
+| E2E-13 | 运行日志 | 通过 | e2e-live |
+| E2E-14 | 系统设置 | 通过 | e2e-live |
+| E2E-15 | 自由对话列表 | 通过 | e2e-live |
+| E2E-16 | 自由对话详情 | 通过 | e2e-live 策略面板；真实发送经 `accept:conversation` |
+| E2E-17 | 错误状态 | 通过 | e2e-live |
+| E2E-18 | 真实 AI 主链路 | 通过 | API 与 Playwright UI 均到 `ACCEPTED` |
+| E2E-19 | 重启恢复 | 通过 | 项目/任务/对话仍在；任务保持 `DRAFT` 未自动续跑；仅 4317/4318 监听 |
+
+### 本次发现的 BUG 与修复
+
+| # | 级别 | 现象 | 根因 | 修复 |
+|---|---|---|---|---|
+| 11 | Blocker | `protocol-spike` `npm run validate` 立刻退出，未完成握手 | 默认只找 `codex-harness`，Windows 上只有官方 `codex`；子进程失败后 RPC 悬挂 | spike 解析 `CODEX_BIN` / PATH 上的 `codex`，展开 npm `codex.exe`，启动失败立即 reject |
+| 12 | Blocker | V3 worktree 校验失败，清理报 `EPERM` | OS 临时目录是 `ADMINI~1` 短路径，Codex 沙箱拒绝；进程未退净 | scratch 改到仓库 `.tmp-e2e` 并 `realpathSync.native`；清理加重试 |
+| 13 | Major | V4 重启恢复：`thread/turns/list` 要 `experimentalApi`；`thread/items/list` 未知；`thread/turns/items/list` 返回 not supported | 官方 Codex 0.142.2 握手与 items API 与旧 `codex-harness` 不一致 | initialize 声明 `experimentalApi`；items 优先新方法，失败则从 `thread/read?includeTurns` 回填 |
+| 14 | Major | 产品对话历史同步在官方 Codex 上会同样失败 | `AppServerRuntime.listItems` 仍调用 `thread/items/list` | 先试 `thread/turns/items/list`，再回退旧方法；不可用时 `ConversationService` 从 `thread/read` 取 items |
+| 15 | Test | V5「计划内写文件」在 Windows 上得到 `prompt` | spike 策略用未 normalize 的 `/tmp/...` 和 `resolve` 后的盘符路径做精确比较 | 对齐主应用：`resolve` 目标路径，用 `isInside` 判断 allowed/planned |
+| 16 | Major | `pnpm services:status` 显示已停止，但 4317 仍被占用；Vite 曾漂到 4320 | 只认 PID 文件；Vite 未 `strictPort` | `scripts/services.mjs` 按端口探测/清理/健康检查；Vite `strictPort: true` |
+| 17 | Major | `pnpm accept:crash` 报 `spawn codex-harness ENOENT`，修好后又 `thread/start` 5s 超时 | 脚本写死 `codex-harness`；官方 Codex 握手更慢 | `AppServerRuntime` 默认走 `resolveAvailableCodexBin()`；崩溃脚本超时改为 30s |
+
+### Minor
+
+- 没有 `GET /api/projects/:id`（Fastify 返回 404）。重启验证改用 `GET /api/projects` 列表 + `GET /api/tasks/:id` + `GET /api/conversations/:id`，不阻塞。
+- 现场库里留下探测项目 `E2E-19 Restart Probe`（任务保持 `DRAFT`），可从 UI 删除。
+- 隔离 Playwright 过程中 Vite 有 `ws proxy socket error: ECONNABORTED`，测试仍通过，属页面关闭时的代理噪声。
+
+### 全量结论
+
+E2E-01–E2E-19 与 AC-001–AC-005 在 Windows + 官方 Codex 0.142.2 上通过。上述 Blocker/Major 已修复并复验。
+
+---
+
 ## 2026-09-01 Windows 主流程复验（E2E-18 / AC-001）
 
 执行时间：2026-09-01  

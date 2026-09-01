@@ -73,7 +73,8 @@ function classifyFile({ path: targetPath, action }, context) {
     return { level: "deny", reason: "file path is not absolute" };
   }
 
-  if (!isInside(context.worktreeRoot, targetPath)) {
+  const target = resolve(targetPath);
+  if (!isInside(context.worktreeRoot, target)) {
     return { level: "deny", reason: "path is outside worktree" };
   }
 
@@ -89,14 +90,19 @@ function classifyFile({ path: targetPath, action }, context) {
     return { level: "prompt", reason: "unknown file action" };
   }
 
-  const planned = context.plannedPaths ?? context.allowedPaths ?? [];
-  if (planned.some((entry) => targetPath === resolve(entry))) {
-    return { level: "autoAllow", reason: "planned file change inside allowed scope" };
+  const forbidden = context.forbiddenPaths ?? [];
+  if (forbidden.some((entry) => isInside(resolve(entry), target))) {
+    return { level: "deny", reason: "path is explicitly forbidden" };
   }
 
-  const forbidden = context.forbiddenPaths ?? [];
-  if (forbidden.some((entry) => isInside(resolve(entry), targetPath))) {
-    return { level: "deny", reason: "path is explicitly forbidden" };
+  const allowed = context.allowedPaths ?? [];
+  if (allowed.some((entry) => isInside(resolve(entry), target))) {
+    return { level: "autoAllow", reason: "file change inside allowed scope" };
+  }
+
+  const planned = context.plannedPaths ?? [];
+  if (planned.some((entry) => isInside(resolve(entry), target))) {
+    return { level: "autoAllow", reason: "planned file change inside allowed scope" };
   }
 
   return { level: "prompt", reason: "file change is outside planned scope" };

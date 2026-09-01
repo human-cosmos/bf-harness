@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import type { ValidationCommand } from "@bugfix-harness/shared";
-import { terminateChildTree } from "./process-guard.js";
+import { spawnCommand, terminateChildTree } from "./process-guard.js";
+import { missingPackageScriptReason } from "./validation-command-infer.js";
 
 export type ValidationStatus = "passed" | "failed" | "timeout" | "skipped";
 
@@ -51,6 +51,12 @@ export class ValidationRunner {
   ): Promise<ValidationOutcome> {
     const startedAt = new Date().toISOString();
     return new Promise((resolve) => {
+      const skipReason = missingPackageScriptReason(command.command, cwd);
+      if (skipReason) {
+        resolve(this.skipped(command, cwd, skipReason));
+        return;
+      }
+
       if (!Array.isArray(command.command) || command.command.length === 0) {
         resolve({
           command,
@@ -65,10 +71,11 @@ export class ValidationRunner {
         return;
       }
 
-      const child = spawn(command.command[0], command.command.slice(1), {
+      const child = spawnCommand(command.command[0], command.command.slice(1), {
         cwd,
         env: process.env,
         windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
       });
 
       const stdout = createOutputBuffer(MAX_OUTPUT_BYTES);
@@ -94,10 +101,10 @@ export class ValidationRunner {
         });
       }, command.timeoutSec * 1000);
 
-      child.stdout.on("data", (chunk) => {
+      child.stdout?.on("data", (chunk) => {
         stdout.append(chunk.toString());
       });
-      child.stderr.on("data", (chunk) => {
+      child.stderr?.on("data", (chunk) => {
         stderr.append(chunk.toString());
       });
       child.on("error", (error) => {

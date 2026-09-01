@@ -2,6 +2,7 @@ import {
   createBugfixTaskInputSchema,
   createProjectFromRemoteInputSchema,
   createProjectInputSchema,
+  updateProjectInputSchema,
   createTaskContract,
   MAX_PROMPT_TEMPLATE_LENGTH,
   PROMPT_TEMPLATE_KEYS,
@@ -36,6 +37,7 @@ import { AgentEventRepository } from "../repositories/agent-event-repository.js"
 import { AgentOrchestrator } from "./agent-orchestrator.js";
 import { EventBus } from "./event-bus.js";
 import { redactSensitive } from "./redaction.js";
+import { reconcileValidationCommands } from "./validation-command-infer.js";
 import {
   ClarificationCoordinator,
   type ClarificationAnswers,
@@ -250,8 +252,42 @@ export class BugfixService {
     if (this.projects.findByRepoPath(parsed.repoPath)) {
       throw new Error("A project already exists for this repository path");
     }
-    const project = this.projects.create(parsed);
+    const project = this.projects.create({
+      ...parsed,
+      validationCommands: reconcileValidationCommands(
+        parsed.repoPath,
+        parsed.validationCommands,
+      ),
+    });
     this.events.publish({ type: "project.created", payload: project });
+    return project;
+  }
+
+  async updateProject(id: string, input: unknown) {
+    const existing = this.projects.get(id);
+    if (!existing) {
+      throw new Error("Project not found");
+    }
+    const parsed = updateProjectInputSchema.parse(input);
+    const nextRepoPath = parsed.repoPath ?? existing.repoPath;
+    if (parsed.repoPath !== undefined) {
+      await this.worktreeManager.validateRepository(parsed.repoPath);
+      const duplicate = this.projects.findByRepoPath(parsed.repoPath);
+      if (duplicate && duplicate.id !== id) {
+        throw new Error("A project already exists for this repository path");
+      }
+    }
+    const nextCommands =
+      parsed.validationCommands !== undefined
+        ? reconcileValidationCommands(nextRepoPath, parsed.validationCommands)
+        : parsed.repoPath !== undefined
+          ? reconcileValidationCommands(nextRepoPath, existing.validationCommands)
+          : existing.validationCommands;
+    const project = this.projects.update(id, {
+      ...parsed,
+      validationCommands: nextCommands,
+    });
+    this.events.publish({ type: "project.updated", payload: project });
     return project;
   }
 
@@ -823,6 +859,10 @@ export class BugfixService {
   }
 
   startValidationJob(taskId: string) {
+    const task = this.tasks.get(taskId);
+    if (task?.status === "BLOCKED") {
+      this.workflow.transitionTask(taskId, "VALIDATING");
+    }
     return this.startBackgroundJob(taskId, "validate", "运行检查", () =>
       this.execution.runValidations(taskId),
     );

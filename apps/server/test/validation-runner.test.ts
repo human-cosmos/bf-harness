@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -52,6 +52,50 @@ describe("ValidationRunner", () => {
         cwd,
       );
       expect(result.status).toBe("timeout");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("skips npm scripts that are not defined in package.json", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bugfix-validation-"));
+    try {
+      writeFileSync(
+        join(cwd, "package.json"),
+        JSON.stringify({ name: "demo", scripts: { typecheck: "tsc --noEmit" } }),
+      );
+      const result = await new ValidationRunner().run(
+        {
+          id: "test",
+          label: "test",
+          command: ["npm", "test"],
+          timeoutSec: 10,
+        },
+        cwd,
+      );
+      expect(result.status).toBe("skipped");
+      expect(result.skipReason).toContain("test");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("runs npm --version through Windows cmd shims when needed", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "bugfix-validation-"));
+    try {
+      const result = await new ValidationRunner().run(
+        {
+          id: "npm-version",
+          label: "npm-version",
+          command: ["npm", "--version"],
+          timeoutSec: 20,
+        },
+        cwd,
+      );
+      expect(result.status).toBe("passed");
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toMatch(/\d+\.\d+/);
+      expect(result.stderr).not.toContain("ENOENT");
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

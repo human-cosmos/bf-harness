@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AppServerClient } from "../lib/app-server.mjs";
+import { makeSpikeScratch, removeScratch, resolveLongPath } from "../lib/paths.mjs";
 
-const tempRoot = mkdtempSync(join(tmpdir(), "bugfix-harness-v3-"));
-const repoPath = join(tempRoot, "repo");
+const tempRoot = makeSpikeScratch("bugfix-harness-v3-");
+const repoPath = resolveLongPath(join(tempRoot, "repo"));
 const worktreePath = join(tempRoot, "worktree");
 const branchName = `harness/v3-${Date.now()}`;
 let client;
@@ -41,8 +41,10 @@ try {
     baseline,
   ]);
 
+  const resolvedWorktree = resolveLongPath(worktreePath);
+
   client = new AppServerClient({
-    cwd: worktreePath,
+    cwd: resolvedWorktree,
     approvalMode: "accept",
     timeoutMs: 120_000,
     log: (label, value) => {
@@ -57,7 +59,7 @@ try {
   });
 
   await client.startThread({
-    cwd: worktreePath,
+    cwd: resolvedWorktree,
     sandbox: "workspace-write",
     approvalPolicy: "on-request",
     approvalsReviewer: "user",
@@ -78,14 +80,14 @@ try {
   const completion = await client.waitForTurnCompletion();
   console.log("[v3] turn-status", completion.turn?.status);
 
-  const spikeFile = join(worktreePath, "spike.txt");
+  const spikeFile = join(resolvedWorktree, "spike.txt");
   const worktreeCreated = existsSync(spikeFile);
   const originalUntouched = !existsSync(join(repoPath, "spike.txt"));
   const originalClean =
     run("git", ["-C", repoPath, "status", "--porcelain"]).stdout.trim() === "";
   const diffResult = spawnSync(
     "git",
-    ["-C", worktreePath, "diff", "--no-index", "--", "/dev/null", "spike.txt"],
+    ["-C", resolvedWorktree, "diff", "--no-index", "--", "/dev/null", "spike.txt"],
     { encoding: "utf8" },
   );
   const diff = diffResult.stdout || diffResult.stderr || "";
@@ -118,5 +120,6 @@ try {
   process.exitCode = 1;
 } finally {
   client?.close();
-  rmSync(tempRoot, { recursive: true, force: true });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  removeScratch(tempRoot);
 }

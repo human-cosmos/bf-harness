@@ -9,6 +9,7 @@ import {
   terminateChildTree,
   usesWindowsShell,
 } from "./process-guard.js";
+import { resolveAvailableCodexBin } from "./codex-runtime-service.js";
 
 const localCodexBin = join(
   import.meta.url ? dirname(fileURLToPath(import.meta.url)) : process.cwd(),
@@ -70,6 +71,19 @@ export interface TurnCompletionWaitOptions {
   maxTimeoutMs?: number | null;
 }
 
+function isUnknownRpcMethod(error: unknown, method: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes(`unknown variant \`${method}\``) ||
+    message.includes("Method not found")
+  );
+}
+
+function isUnsupportedRpcMethod(error: unknown, method: string): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes(method) && message.includes("not supported yet");
+}
+
 export class AppServerRuntime extends EventEmitter {
   private child: ChildProcess | null = null;
   private nextRequestId = 1;
@@ -124,7 +138,7 @@ export class AppServerRuntime extends EventEmitter {
     this.options = {
       codexBin:
         options.codexBin ??
-        process.env.CODEX_BIN ??
+        resolveAvailableCodexBin() ??
         (existsSync(localCodexBin) ? localCodexBin : "codex-harness"),
       cwd: options.cwd ?? process.cwd(),
       approvalMode: options.approvalMode ?? "decline",
@@ -357,13 +371,24 @@ export class AppServerRuntime extends EventEmitter {
       sortDirection?: "asc" | "desc" | null;
     } = {},
   ): Promise<unknown> {
-    return this.rpc("thread/items/list", {
+    const params = {
       threadId,
       turnId: options.turnId ?? null,
       cursor: options.cursor ?? null,
       limit: options.limit ?? null,
       sortDirection: options.sortDirection ?? null,
-    });
+    };
+    try {
+      return await this.rpc("thread/turns/items/list", params);
+    } catch (error) {
+      if (
+        !isUnknownRpcMethod(error, "thread/turns/items/list") &&
+        !isUnsupportedRpcMethod(error, "thread/turns/items/list")
+      ) {
+        throw error;
+      }
+      return this.rpc("thread/items/list", params);
+    }
   }
 
   async forkThread(

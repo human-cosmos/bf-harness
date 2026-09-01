@@ -268,9 +268,12 @@ export class ExecutionService {
       outcomes.push(outcome);
     }
 
+    // Skipped checks do not block acceptance; an empty check list has nothing to fail.
+    const blocking = outcomes.filter((outcome) => outcome.status !== "skipped");
     const allPassed =
-      outcomes.length > 0 &&
-      outcomes.every((outcome) => outcome.status === "passed");
+      outcomes.length === 0
+        ? true
+        : blocking.every((outcome) => outcome.status === "passed");
     if (allPassed && task.status === "VALIDATING") {
       this.tasks.updateStatus(taskId, "WAITING_FOR_ACCEPTANCE");
       this.events?.publish({

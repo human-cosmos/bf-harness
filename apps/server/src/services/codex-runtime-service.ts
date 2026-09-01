@@ -230,3 +230,18 @@ export class CodexRuntimeService {
     return this.detect().codexBin;
   }
 }
+
+export function resolveAvailableCodexBin(
+  envCodexBin: string | undefined = process.env.CODEX_BIN,
+  pathEnv: string | undefined = process.env.PATH,
+): string | null {
+  const settings = {
+    get: () => ({ runtime: {} }),
+  } as SystemSettingsService;
+  return new CodexRuntimeService(
+    settings,
+    undefined,
+    pathEnv,
+    envCodexBin,
+  ).resolveCodexBin();
+}

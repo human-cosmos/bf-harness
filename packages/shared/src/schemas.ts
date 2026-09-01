@@ -70,6 +70,18 @@ export const createProjectInputSchema = projectSchema
     forbiddenPaths: z.array(z.string().min(1)).default([]),
   });
 
+export const updateProjectInputSchema = createProjectInputSchema
+  .pick({
+    name: true,
+    repoPath: true,
+    instructionSources: true,
+    validationCommands: true,
+    allowedPaths: true,
+    forbiddenPaths: true,
+    defaultBranch: true,
+  })
+  .partial();
+
 export const createProjectFromRemoteInputSchema = z.object({
   name: z.string().max(120).optional(),
   remoteUrl: z.string().min(1),
@@ -131,6 +143,7 @@ export const taskContractSchema = z.object({
 });
 
 export type CreateProjectInput = z.infer<typeof createProjectInputSchema>;
+export type UpdateProjectInput = z.infer<typeof updateProjectInputSchema>;
 export type CreateProjectFromRemoteInput = z.infer<
   typeof createProjectFromRemoteInputSchema
 >;
