@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
+import { createReadStream, existsSync, statSync } from "node:fs";
 import { platform } from "node:os";
-import { basename } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import {
@@ -11,6 +12,51 @@ import type { BugfixService } from "./services/bugfix-service.js";
 import { DiskMonitor } from "./services/disk-monitor.js";
 import { DynamicToolRegistry } from "./services/dynamic-tool-registry.js";
 import { redactSensitive } from "./services/redaction.js";
+
+function contentTypeFor(filePath: string): string {
+  switch (extname(filePath).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".mjs":
+      return "text/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".gif":
+      return "image/gif";
+    case ".ico":
+      return "image/x-icon";
+    case ".woff":
+      return "font/woff";
+    case ".woff2":
+      return "font/woff2";
+    case ".map":
+      return "application/json; charset=utf-8";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function safeWebPath(webRoot: string, pathname: string): string | null {
+  const decoded = decodeURIComponent(pathname);
+  const relative = decoded === "/" ? "index.html" : `.${decoded}`;
+  const target = resolve(webRoot, relative);
+  const rootWithSep = webRoot.endsWith(sep) ? webRoot : `${webRoot}${sep}`;
+  if (target !== webRoot && !target.startsWith(rootWithSep)) {
+    return null;
+  }
+  return target;
+}
 
 function pickDirectory(): Promise<string | null> {
   return new Promise((resolve, reject) => {
@@ -1244,6 +1290,37 @@ export async function buildApp(service: BugfixService) {
       return reply.code(400).send({ error: (error as Error).message });
     }
   });
+
+  const webRoot = process.env.BUGFIX_HARNESS_WEB_ROOT?.trim();
+  if (webRoot) {
+    const indexFile = join(webRoot, "index.html");
+    app.setNotFoundHandler(async (request, reply) => {
+      if (request.url.startsWith("/api/")) {
+        return reply.code(404).send({ error: "Not found" });
+      }
+
+      const pathname = new URL(request.url, "http://localhost").pathname;
+      const filePath = safeWebPath(webRoot, pathname);
+      if (filePath && filePath !== indexFile && existsSync(filePath)) {
+        try {
+          if (statSync(filePath).isFile()) {
+            return reply
+              .type(contentTypeFor(filePath))
+              .send(createReadStream(filePath));
+          }
+        } catch {
+          // Fall through to the SPA entry point.
+        }
+      }
+
+      if (!existsSync(indexFile)) {
+        return reply.code(404).send({ error: "Web root has no index.html" });
+      }
+      return reply
+        .type("text/html; charset=utf-8")
+        .send(createReadStream(indexFile));
+    });
+  }
 
   return app;
 }

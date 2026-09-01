@@ -15,6 +15,7 @@
     "accept:crash": "pnpm --filter @bugfix-harness/server accept:crash",
     "dev:server": "pnpm --filter @bugfix-harness/server dev",
     "dev:web": "pnpm --filter @bugfix-harness/web dev",
+    "assemble:windows-resources": "node scripts/assemble-windows-resources.mjs",
     "services:start": "node scripts/services.mjs start",
     "services:stop": "node scripts/services.mjs stop",
     "services:restart": "node scripts/services.mjs restart",

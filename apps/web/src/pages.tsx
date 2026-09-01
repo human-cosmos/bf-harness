@@ -928,6 +928,7 @@ function ThemeToggle() {
     } catch {
       // localStorage may be unavailable in some embedded contexts.
     }
+    void window.desktop?.setTheme?.(theme);
   }, [theme]);
 
   const nextTheme = theme === "dark" ? "light" : "dark";

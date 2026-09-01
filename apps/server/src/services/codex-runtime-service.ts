@@ -7,7 +7,7 @@ import type { SystemSettingsService } from "./system-settings-service.js";
 const RUNTIME_COMMAND = "codex-harness app-server --stdio";
 
 const localCodexBin = join(
-  dirname(fileURLToPath(import.meta.url)),
+  import.meta.url ? dirname(fileURLToPath(import.meta.url)) : process.cwd(),
   "../../../codex-harness/codex-rs/target/debug/codex",
 );
 

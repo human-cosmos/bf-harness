@@ -1,0 +1,17 @@
+{
+  "name": "@bugfix-harness/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dist:win": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3"
+  }
+}

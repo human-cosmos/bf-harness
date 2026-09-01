@@ -1,0 +1,38 @@
+appId: com.bugfix-harness.desktop
+productName: Bugfix Harness
+electronVersion: 44.0.0
+electronDist: node_modules/electron/dist
+
+directories:
+  app: .
+  output: release
+
+npmRebuild: false
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: ../../build/node
+    to: node
+  - from: ../../build/server
+    to: server
+    filter:
+      - "**/*"
+  - from: ../../build/codex
+    to: codex
+  - from: ../../build/git
+    to: git
+
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  signExecutable: false
+
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: true

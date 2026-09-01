@@ -83,6 +83,18 @@ export class AgentOrchestrator {
 
   private readonly activeRuntimes = new Map<string, AppServerRuntime>();
 
+  shutdown(): void {
+    const runtimes = [...this.activeRuntimes.values()];
+    this.activeRuntimes.clear();
+    for (const runtime of runtimes) {
+      try {
+        runtime.close();
+      } catch {
+        // Best effort during shutdown.
+      }
+    }
+  }
+
   async interruptTask(taskId: string): Promise<void> {
     const runtime = this.activeRuntimes.get(taskId);
     if (!runtime) {

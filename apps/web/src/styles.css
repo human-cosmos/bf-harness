@@ -226,6 +226,19 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+.login-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  background: var(--bg);
+}
+
+.login-card {
+  width: min(440px, 100%);
+  margin: 0;
+}
+
 a {
   color: var(--accent);
   text-decoration: none;
@@ -294,16 +307,24 @@ p {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
 }
 
 .topbar-inner {
   max-width: 1120px;
   margin: 0 auto;
-  padding: 0 var(--space-6);
+  padding: 0 148px 0 var(--space-6);
   height: 60px;
   display: flex;
   align-items: center;
   gap: var(--space-6);
+}
+
+.topbar a,
+.topbar button,
+.topbar nav,
+.topbar .nav-link {
+  -webkit-app-region: no-drag;
 }
 
 .brand {

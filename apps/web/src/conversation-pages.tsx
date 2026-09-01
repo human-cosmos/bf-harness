@@ -1790,6 +1790,8 @@ export function ConversationPage() {
         />
       ))}
 
+      <ActivityInspector events={events} />
+
       <MessageTimeline
         key={conversationId}
         items={items}

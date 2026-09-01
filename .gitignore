@@ -1,5 +1,9 @@
 node_modules
 dist
+build/
+apps/server/dist-desktop/
+apps/server/.deploy-desktop/
+apps/desktop/release/
 coverage
 .DS_Store
 *.log

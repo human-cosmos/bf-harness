@@ -51,7 +51,7 @@ import {
 import { classifyHarnessEvent } from "./task-log-classifier.js";
 
 const localCodexBin = join(
-  dirname(fileURLToPath(import.meta.url)),
+  import.meta.url ? dirname(fileURLToPath(import.meta.url)) : process.cwd(),
   "../../../codex-harness/codex-rs/target/debug/codex",
 );
 
@@ -891,5 +891,10 @@ export class BugfixService {
       payload: worktree,
     });
     return worktree;
+  }
+
+  shutdown(): void {
+    this.conversationService.closeAllRuntimes();
+    this.agent.shutdown();
   }
 }

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const localCodexBin = join(
-  dirname(fileURLToPath(import.meta.url)),
+  import.meta.url ? dirname(fileURLToPath(import.meta.url)) : process.cwd(),
   "../../../codex-harness/codex-rs/target/debug/codex",
 );
 

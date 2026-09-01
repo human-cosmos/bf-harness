@@ -119,6 +119,10 @@ export class ConversationService {
       });
   }
 
+  closeAllRuntimes(): void {
+    this.runtimeManager.closeAll();
+  }
+
   async createConversation(input: unknown): Promise<Conversation> {
     const parsed = createConversationInputSchema.parse(input);
     const project = this.options.projects.get(parsed.projectId);
