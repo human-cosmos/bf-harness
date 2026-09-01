@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -26,10 +26,28 @@ const gitCmdDir = path.join(resourcesRoot, "git", "cmd");
 const codexDir = path.dirname(codexExe);
 const codexHome = path.join(app.getPath("userData"), "codex-home");
 const codexAuthFile = path.join(codexHome, "auth.json");
+const codexConfigFile = path.join(codexHome, "config.toml");
 const harnessHome = path.join(app.getPath("userData"), "harness");
 
 mkdirSync(codexHome, { recursive: true });
 mkdirSync(harnessHome, { recursive: true });
+
+if (!existsSync(codexConfigFile)) {
+  writeFileSync(
+    codexConfigFile,
+    [
+      'model_provider = "deepseek"',
+      'model = "deepseek-v4-flash"',
+      "",
+      "[model_providers.deepseek]",
+      'name = "DeepSeek"',
+      'base_url = "https://api.deepseek.com/v1"',
+      'wire_api = "responses"',
+      "requires_openai_auth = true",
+      "",
+    ].join("\n"),
+  );
+}
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
