@@ -2424,7 +2424,10 @@ export function TaskDetailPage() {
   }
 
   const status = state?.task.status ?? "DRAFT";
-  const canAnalyze = status === "DRAFT" || status === "PREPARING_WORKSPACE";
+  const canAnalyze =
+    status === "DRAFT" ||
+    status === "PREPARING_WORKSPACE" ||
+    status === "FAILED";
   const hasRunningImplementation = state?.jobs.some(
     (job) =>
       job.status === "running" &&
@@ -2458,7 +2461,11 @@ export function TaskDetailPage() {
       disabled={Boolean(busy)}
       onClick={() => run(() => api.analyze(id!), "开始修复", "提交成功")}
     >
-      {busy === "开始修复" ? "处理中..." : "开始修复"}
+      {busy === "开始修复"
+        ? "处理中..."
+        : status === "FAILED"
+          ? "重新分析"
+          : "开始修复"}
     </button>
   ) : canImplement ? (
     <button

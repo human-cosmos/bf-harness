@@ -1,5 +1,7 @@
 import {
+  ANALYZE_OUTPUT_REQUIREMENTS,
   buildAnalyzePrompt,
+  buildAnalyzeRetryPrompt,
   buildImplementPrompt,
   buildPlanQuestionPrompt,
   coerceRepairPlan,
@@ -47,6 +49,23 @@ export function extractJsonText(text: string): string {
       return candidate;
     }
     throw new Error("Agent output did not contain a JSON object");
+  }
+}
+
+export function parseRepairPlanText(
+  agentText: string,
+  roots: string[] = [],
+): RepairPlan {
+  try {
+    return planSchema.parse(
+      coerceRepairPlan(JSON.parse(extractJsonText(agentText)), roots),
+    );
+  } catch (error) {
+    throw new Error(
+      `Failed to parse repair plan from agent output: ${
+        (error as Error).message
+      }\n${agentText.slice(0, 2000)}`,
+    );
   }
 }
 
@@ -183,6 +202,12 @@ export class AgentOrchestrator {
       this.workflow.transitionTask(taskId, "ANALYZING");
     }
 
+    let failureDetails: {
+      message: string;
+      threadId?: string;
+      turnId?: string;
+    } | null = null;
+
     try {
       const project = this.projects.get(task.projectId);
       if (!project) {
@@ -265,9 +290,7 @@ export class AgentOrchestrator {
                   this.promptTemplates.get("analyze"),
                 ),
                 "",
-                "Your final message must be a JSON object with exactly these keys:",
-                "problemSummary, rootCauseHypothesis, evidence, proposedFiles, fixStrategy, regressionTests, validationCommands, risks, openQuestions.",
-                "Use repository-relative file paths in proposedFiles.",
+                ANALYZE_OUTPUT_REQUIREMENTS,
               ].join("\n"),
             },
           ],
@@ -289,18 +312,47 @@ export class AgentOrchestrator {
         const agentText = runtime.getAgentText();
         let plan: RepairPlan;
         try {
-          plan = planSchema.parse(
-            coerceRepairPlan(JSON.parse(extractJsonText(agentText)), [
-              worktree.path,
-              project.repoPath,
-            ]),
-          );
+          plan = parseRepairPlanText(agentText, [
+            worktree.path,
+            project.repoPath,
+          ]);
         } catch (error) {
-          throw new Error(
-            `Failed to parse repair plan from agent output: ${
-              (error as Error).message
-            }\n${agentText.slice(0, 2000)}`,
-          );
+          try {
+            this.events.append({
+              taskId,
+              codexThreadId: runtime.currentThreadId ?? undefined,
+              codexTurnId: runtime.currentTurnId ?? undefined,
+              method: "analysis.parse_retry",
+              payload: { error: (error as Error).message },
+              level: "warn",
+              source: "runtime",
+              phase: "analyze",
+              message: "修复计划 JSON 不完整，正在请求精简重试。",
+            });
+          } catch {
+            // Retrying the analysis is more important than recording the warning.
+          }
+          await runtime.startTurn({
+            threadId: runtime.currentThreadId!,
+            input: [{ type: "text", text: buildAnalyzeRetryPrompt() }],
+            outputSchema: planOutputSchema,
+            approvalPolicy: settings.security.analyzeApprovalPolicy,
+            approvalsReviewer: settings.security.analyzeApprovalsReviewer,
+            model: settings.models.bugfixModel ?? null,
+            effort: settings.models.bugfixReasoningEffort ?? null,
+            sandboxPolicy: {
+              type: "readOnly",
+              networkAccess: false,
+            },
+          });
+          await runtime.waitForTurnCompletion({
+            idleTimeoutMs: settings.agent.analysisIdleTimeoutMs,
+            maxTimeoutMs: settings.agent.analysisMaxDurationMs,
+          });
+          plan = parseRepairPlanText(runtime.getAgentText(), [
+            worktree.path,
+            project.repoPath,
+          ]);
         }
         this.workflow.submitPlan(taskId, plan);
         this.sessions.create({
@@ -308,12 +360,35 @@ export class AgentOrchestrator {
           codexThreadId: runtime.currentThreadId!,
         });
         return plan;
+      } catch (error) {
+        failureDetails = {
+          message: error instanceof Error ? error.message : String(error),
+          threadId: runtime.currentThreadId ?? undefined,
+          turnId: runtime.currentTurnId ?? undefined,
+        };
+        throw error;
       } finally {
         this.untrackRuntime(taskId, runtime);
         detach();
         await runtime.closeAndWait();
       }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        this.events.append({
+          taskId,
+          codexThreadId: failureDetails?.threadId,
+          codexTurnId: failureDetails?.turnId,
+          method: "analysis.failed",
+          payload: { error: message },
+          level: "error",
+          source: "runtime",
+          phase: "analyze",
+          message: `分析阶段失败：${message}`,
+        });
+      } catch {
+        // Keep the original analysis error as the source of truth.
+      }
       if (this.tasks.get(taskId)?.status === "ANALYZING") {
         this.workflow.transitionTask(taskId, "FAILED");
       }

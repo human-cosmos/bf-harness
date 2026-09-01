@@ -206,6 +206,14 @@ describe("workflow model", () => {
     expect(next.href).toContain("/diff#validation-action");
   });
 
+  it("offers a re-analysis action after analysis failure", () => {
+    const next = nextActionForState(
+      state({ task: { ...state().task, status: "FAILED" } }),
+    );
+    expect(next.key).toBe("start-analyze");
+    expect(next.label).toBe("重新分析");
+  });
+
   it("overrides the badge while implementation is actually running", () => {
     const next = effectiveStatusForState(
       state({

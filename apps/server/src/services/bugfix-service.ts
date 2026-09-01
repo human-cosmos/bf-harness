@@ -525,7 +525,7 @@ export class BugfixService {
   }
 
   startAnalyze(taskId: string) {
-    const task = this.tasks.get(taskId);
+    let task = this.tasks.get(taskId);
     if (!task) {
       throw new Error("Task not found");
     }
@@ -534,9 +534,15 @@ export class BugfixService {
       "DRAFT",
       "PREPARING_WORKSPACE",
       "ANALYZING",
+      "FAILED",
     ];
     if (!analyzableStatuses.includes(task.status)) {
       throw new Error(`Cannot start analysis from status ${task.status}`);
+    }
+
+    if (task.status === "FAILED") {
+      this.workflow.transitionTask(taskId, "ANALYZING");
+      task = this.tasks.get(taskId)!;
     }
 
     const existing = this.analysisRuns.get(taskId);

@@ -191,6 +191,16 @@ export const planOutputSchema = {
   },
 } as const;
 
+export const ANALYZE_OUTPUT_REQUIREMENTS = [
+  "Your final message must be a JSON object with exactly these keys:",
+  "problemSummary, rootCauseHypothesis, evidence, proposedFiles, fixStrategy, regressionTests, validationCommands, risks, openQuestions.",
+  "Use repository-relative file paths in proposedFiles.",
+  "Output ONLY the JSON object. Do not write any text before or after it.",
+  "Do not paste the bug report back into the plan; summarize it briefly.",
+  "Keep problemSummary, rootCauseHypothesis, and fixStrategy under 400 characters each.",
+  "Keep every list item under 200 characters and every list under 10 items.",
+].join("\n");
+
 export const PROMPT_TEMPLATE_KEYS = [
   "analyze",
   "implement",
@@ -247,6 +257,10 @@ const analyzeDefaultTemplate = [
   "Use only the tool calls needed to form a concrete repair plan.",
   "If the request is too broad to form one concrete plan, ask for clarification instead.",
   "Return only a JSON object matching the requested output schema.",
+  "Output nothing before or after the JSON object.",
+  "Do not paste the bug report back into the plan; summarize it briefly.",
+  "Keep problemSummary, rootCauseHypothesis, and fixStrategy under 400 characters each.",
+  "Keep every list item under 200 characters and every list under 10 items.",
   "",
   "Bug contract:",
   "{{contract}}",
@@ -378,6 +392,15 @@ export function buildAnalyzePrompt(
   template: string = DEFAULT_PROMPT_TEMPLATES.analyze,
 ): string {
   return renderPromptTemplate(template, { contract });
+}
+
+export function buildAnalyzeRetryPrompt(): string {
+  return [
+    "Your previous repair plan JSON was incomplete or truncated.",
+    "Write the repair plan again as a single compact JSON object.",
+    ANALYZE_OUTPUT_REQUIREMENTS,
+    "Do not repeat the bug contract text. Keep every field short and concrete.",
+  ].join("\n");
 }
 
 export function buildImplementPrompt(

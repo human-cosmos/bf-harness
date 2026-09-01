@@ -530,6 +530,54 @@ describe("BugfixService", () => {
     }
   });
 
+  it("allows re-running analysis after a failure", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      const project = service.projects.create({
+        name: "retry",
+        repoPath: "/tmp/demo",
+        instructionSources: [],
+        validationCommands: [],
+        allowedPaths: [],
+        forbiddenPaths: [],
+      });
+      const task = service.tasks.create({
+        projectId: project.id,
+        title: "fix",
+        bugDescription: "broken",
+        observedBehavior: "error",
+        expectedBehavior: "works",
+        relatedFiles: [],
+        acceptanceCriteria: [],
+        constraints: [],
+      });
+      service.tasks.updateStatus(task.id, "FAILED");
+      service.systemSettings.save({
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          ...DEFAULT_SYSTEM_SETTINGS.security,
+          bugfixAutomationMode: "manual",
+        },
+      });
+      vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
+        const plan = samplePlan();
+        service.workflow.submitPlan(id, plan);
+        return plan;
+      });
+
+      service.startAnalyze(task.id);
+      await vi.waitUntil(
+        () => service.getAnalysisRun(task.id)?.status === "SUCCEEDED",
+      );
+      expect(service.tasks.get(task.id)?.status).toBe(
+        "WAITING_FOR_PLAN_APPROVAL",
+      );
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
   it("auto-runs implement, validation, and acceptance in auto mode", async () => {
     const { db, service, worktreeRoot } = createService();
     try {

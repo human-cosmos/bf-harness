@@ -46,7 +46,7 @@ const transitions: Record<TaskStatus, TaskStatus[]> = {
     "WAITING_FOR_ACCEPTANCE",
     "CANCELLED",
   ],
-  FAILED: [],
+  FAILED: ["ANALYZING"],
   CANCELLED: [],
   REJECTED: [],
 };

@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractJsonText } from "../src/services/agent-orchestrator.js";
+import {
+  extractJsonText,
+  parseRepairPlanText,
+} from "../src/services/agent-orchestrator.js";
 import { resolveLongPath } from "../src/services/fs-paths.js";
 
 describe("resolveLongPath", () => {
@@ -27,5 +30,22 @@ describe("extractJsonText", () => {
     expect(extractJsonText('The sandbox failed.{"summary":"ok","risks":[]}')).toBe(
       '{"summary":"ok","risks":[]}',
     );
+  });
+});
+
+describe("parseRepairPlanText", () => {
+  it("parses a complete repair plan after leading prose", () => {
+    const plan = parseRepairPlanText(
+      `Prose before the plan.{"problemSummary":"bug","rootCauseHypothesis":"cause","evidence":["log"],"proposedFiles":["src/app.ts"],"fixStrategy":"fix it","regressionTests":["npm test"],"validationCommands":["npm test"],"risks":[],"openQuestions":[]}`,
+    );
+    expect(plan.problemSummary).toBe("bug");
+  });
+
+  it("rejects truncated repair plan JSON with a clear message", () => {
+    expect(() =>
+      parseRepairPlanText(
+        '{"problemSummary":"bug","rootCauseHypothesis":"unterminated',
+      ),
+    ).toThrow(/Failed to parse repair plan from agent output/);
   });
 });

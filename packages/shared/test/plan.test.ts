@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  ANALYZE_OUTPUT_REQUIREMENTS,
   buildAnalyzePrompt,
+  buildAnalyzeRetryPrompt,
   buildImplementPrompt,
   buildPlanQuestionPrompt,
   coerceRepairPlan,
@@ -94,6 +96,14 @@ describe("plan", () => {
       validationCommands: [],
     });
     expect(prompt).toContain("Do not modify files");
+  });
+
+  it("keeps analysis output requirements strict and compact", () => {
+    expect(ANALYZE_OUTPUT_REQUIREMENTS).toContain(
+      "Output ONLY the JSON object",
+    );
+    expect(ANALYZE_OUTPUT_REQUIREMENTS).toContain("under 400 characters");
+    expect(buildAnalyzeRetryPrompt()).toContain("compact JSON object");
   });
 
   it("builds an implementation prompt with the approved plan", () => {

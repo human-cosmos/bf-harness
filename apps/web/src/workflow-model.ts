@@ -307,11 +307,18 @@ export function nextActionForState(state: WorkflowState): NextAction {
     (item) => item.status === "failed" || item.status === "timeout",
   );
 
-  if (status === "DRAFT" || status === "PREPARING_WORKSPACE") {
+  if (
+    status === "DRAFT" ||
+    status === "PREPARING_WORKSPACE" ||
+    status === "FAILED"
+  ) {
     return {
       key: "start-analyze",
-      label: "开始修复",
-      description: "Codex 将创建独立工作区并开始分析问题。",
+      label: status === "FAILED" ? "重新分析" : "开始修复",
+      description:
+        status === "FAILED"
+          ? "上次分析未完成，可以让 Codex 重新分析问题。"
+          : "Codex 将创建独立工作区并开始分析问题。",
       href: `/tasks/${state.task.id}`,
       primary: true,
     };
@@ -415,7 +422,7 @@ export function nextActionForState(state: WorkflowState): NextAction {
     };
   }
 
-  if (status === "FAILED" || status === "REJECTED" || status === "CANCELLED") {
+  if (status === "REJECTED" || status === "CANCELLED") {
     return {
       key: "none",
       label: "任务已结束",
