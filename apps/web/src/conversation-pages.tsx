@@ -130,7 +130,24 @@ function textFromItem(item: ConversationItem): string {
   if (typeof payload.content === "string") return payload.content;
   if (typeof payload.message === "string") return payload.message;
   if (Array.isArray(payload.content)) {
-    return payload.content
+    const contentText = payload.content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (
+          part &&
+          typeof part === "object" &&
+          typeof (part as Record<string, unknown>).text === "string"
+        ) {
+          return (part as Record<string, unknown>).text as string;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    if (contentText) return contentText;
+  }
+  if (Array.isArray(payload.summary)) {
+    return payload.summary
       .map((part) => {
         if (typeof part === "string") return part;
         if (
@@ -2269,13 +2286,10 @@ function ConversationItemBlock({
   }
 
   if (item.itemType === "reasoning") {
-    const content = Array.isArray(item.payload?.content)
-      ? (item.payload.content as string[]).join("\n")
-      : text;
     return (
       <details className="reasoning-block">
         <summary>思考过程</summary>
-        <pre className="conversation-pre">{content}</pre>
+        <pre className="conversation-pre">{text}</pre>
       </details>
     );
   }

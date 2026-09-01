@@ -205,6 +205,34 @@ describe("MessageTimeline", () => {
     expect(screen.getByText("文件变更")).toBeTruthy();
   });
 
+  it("renders reasoning summary from current Codex protocol items", () => {
+    render(
+      <MessageTimeline
+        items={[
+          item({
+            itemType: "userMessage",
+            role: "user",
+            payload: { text: "分析项目" },
+          }),
+          item({
+            itemType: "reasoning",
+            payload: {
+              type: "reasoning",
+              summary: ["先检查依赖清单", "再核对运行配置"],
+              content: [],
+            },
+          }),
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("本轮详情（1 项）"));
+    fireEvent.click(screen.getByText("思考过程"));
+
+    expect(screen.getByText(/先检查依赖清单/)).toBeTruthy();
+    expect(screen.getByText(/再核对运行配置/)).toBeTruthy();
+  });
+
   it("renders only one copy of a locally persisted user message", () => {
     const { container } = render(
       <MessageTimeline

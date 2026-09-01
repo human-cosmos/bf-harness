@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -142,6 +142,23 @@ function writePid(service, pid) {
   writeFileSync(pidPath(service), `${pid}\n`, "utf8");
 }
 
+function findWindowsDescendantPid(parentPid, marker) {
+  const escapedMarker = marker.replaceAll("'", "''");
+  const script = `Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -eq ${parentPid} -and $_.CommandLine -like '*${escapedMarker}*' } | Select-Object -First 1 -ExpandProperty ProcessId`;
+
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", script],
+      { encoding: "utf8", windowsHide: true, timeout: 5000 },
+    ).trim();
+    const pid = Number.parseInt(output, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 function removePid(service) {
   rmSync(pidPath(service), { force: true });
 }
@@ -193,7 +210,17 @@ async function startService(service) {
   mkdirSync(logsDir, { recursive: true });
 
   const child = spawnService(service);
-  writePid(service, child.pid);
+  let trackedPid = null;
+  if (process.platform === "win32") {
+    for (let attempt = 0; attempt < 50 && !trackedPid; attempt += 1) {
+      trackedPid = findWindowsDescendantPid(child.pid, service.packageName);
+      if (!trackedPid) {
+        await delay(100);
+      }
+    }
+  }
+  const pidToWrite = trackedPid || child.pid;
+  writePid(service, pidToWrite);
 
   const error = await new Promise((resolveError) => {
     let settled = false;
@@ -224,9 +251,7 @@ async function startService(service) {
   }
 
   child.unref();
-  console.log(
-    `[${service.label}] 已启动（PID ${child.pid}），地址：${service.url}`,
-  );
+  console.log(`[${service.label}] 已启动（PID ${pidToWrite}），地址：${service.url}`);
   console.log(`[${service.label}] 日志：${logPath(service)}`);
   return true;
 }
