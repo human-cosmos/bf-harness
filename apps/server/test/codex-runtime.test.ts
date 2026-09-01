@@ -9,13 +9,43 @@ import { EventBus } from "../src/services/event-bus.js";
 import { CodexRuntimeService } from "../src/services/codex-runtime-service.js";
 import { SystemSettingsService } from "../src/services/system-settings-service.js";
 
+function writeVersionScript(
+  dir: string,
+  name: string,
+  script: { stdout?: string; stderr?: string; exitCode?: number },
+) {
+  const exitCode = script.exitCode ?? 0;
+  if (process.platform === "win32") {
+    const path = join(dir, `${name}.cmd`);
+    const lines = ["@echo off"];
+    if (script.stdout) {
+      lines.push(`echo ${script.stdout}`);
+    }
+    if (script.stderr) {
+      lines.push(`echo ${script.stderr} 1>&2`);
+    }
+    lines.push(`exit /b ${exitCode}`);
+    writeFileSync(path, `${lines.join("\r\n")}\r\n`);
+    return path;
+  }
+
+  const path = join(dir, name);
+  const body = [
+    "#!/bin/sh",
+    script.stdout ? `printf '${script.stdout}\\n'` : "",
+    script.stderr ? `printf '${script.stderr}\\n' >&2` : "",
+    `exit ${exitCode}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  writeFileSync(path, `${body}\n`, { mode: 0o755 });
+  chmodSync(path, 0o755);
+  return path;
+}
+
 function createExecutableScript() {
   const dir = mkdtempSync(join(tmpdir(), "bugfix-codex-runtime-"));
-  const path = join(dir, "fake-codex");
-  writeFileSync(path, "#!/bin/sh\nprintf 'fake-codex 1.0\n'\n", {
-    mode: 0o755,
-  });
-  chmodSync(path, 0o755);
+  const path = writeVersionScript(dir, "fake-codex", { stdout: "fake-codex 1.0" });
   return { dir, path };
 }
 
@@ -84,13 +114,10 @@ describe("CodexRuntimeService", () => {
   it("does not treat stderr-only output with a non-zero exit as usable", () => {
     const db = openDatabase(":memory:");
     const dir = mkdtempSync(join(tmpdir(), "bugfix-codex-runtime-"));
-    const path = join(dir, "fake-codex-stderr");
-    writeFileSync(
-      path,
-      "#!/bin/sh\nprintf 'fake-codex 9.9\\n' >&2\nexit 1\n",
-      { mode: 0o755 },
-    );
-    chmodSync(path, 0o755);
+    const path = writeVersionScript(dir, "fake-codex-stderr", {
+      stderr: "fake-codex 9.9",
+      exitCode: 1,
+    });
     try {
       const runtime = new CodexRuntimeService(
         new SystemSettingsService(db),
@@ -111,13 +138,10 @@ describe("CodexRuntimeService", () => {
   it("does not treat stdout-only output with a non-zero exit as usable", () => {
     const db = openDatabase(":memory:");
     const dir = mkdtempSync(join(tmpdir(), "bugfix-codex-runtime-"));
-    const path = join(dir, "fake-codex-stdout");
-    writeFileSync(
-      path,
-      "#!/bin/sh\nprintf 'fake-codex 9.9\\n'\nexit 1\n",
-      { mode: 0o755 },
-    );
-    chmodSync(path, 0o755);
+    const path = writeVersionScript(dir, "fake-codex-stdout", {
+      stdout: "fake-codex 9.9",
+      exitCode: 1,
+    });
     try {
       const runtime = new CodexRuntimeService(
         new SystemSettingsService(db),

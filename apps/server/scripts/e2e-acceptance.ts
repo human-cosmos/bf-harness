@@ -1,15 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openDatabase } from "../src/db.js";
 import { BugfixService } from "../src/services/bugfix-service.js";
+import { resolveLongPath } from "../src/services/fs-paths.js";
 
 function git(args: string[]): string {
   return execFileSync("git", args, { encoding: "utf8" }).trim();
 }
 
-const root = mkdtempSync(join(tmpdir(), "bugfix-harness-e2e-"));
+const scratchRoot = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../../.tmp-e2e",
+);
+mkdirSync(scratchRoot, { recursive: true });
+const root = resolveLongPath(mkdtempSync(join(scratchRoot, "run-")));
 const repo = join(root, "repo");
 const worktreeRoot = join(root, "worktrees");
 
@@ -28,7 +34,7 @@ try {
     repoPath: repo,
     instructionSources: [],
     validationCommands: [
-      { id: "echo", label: "Echo", command: ["echo", "accepted"], timeoutSec: 30 },
+      { id: "echo", label: "Echo", command: ["node", "-e", "console.log('accepted')"], timeoutSec: 30 },
     ],
     allowedPaths: [repo],
     forbiddenPaths: [],
@@ -60,8 +66,18 @@ try {
     finalStatus: service.tasks.get(created.task.id)?.status,
   });
 } catch (error) {
-  console.error("E2E_ACCEPTANCE_FAILED", error);
+  const message =
+    error instanceof Error
+      ? error.stack ?? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error, Object.getOwnPropertyNames(error as object));
+  console.error("E2E_ACCEPTANCE_FAILED", message);
   process.exitCode = 1;
 } finally {
-  rmSync(root, { recursive: true, force: true });
+  try {
+    rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+  } catch (error) {
+    console.warn("E2E cleanup skipped:", (error as Error).message);
+  }
 }

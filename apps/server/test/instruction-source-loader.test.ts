@@ -17,6 +17,7 @@ describe("loadInstructionSources", () => {
     mkdirSync(join(worktree, "docs"), { recursive: true });
     writeFileSync(join(worktree, "docs", "STANDARDS.md"), "Always run tests first.\n");
     writeFileSync(join(worktree, "docs", "CONTRIBUTING.md"), "Use lowercase commits.\n");
+    const absoluteSource = join(repo, "docs", "CONTRIBUTING.md");
 
     try {
       const context = await loadInstructionSources({
@@ -24,13 +25,13 @@ describe("loadInstructionSources", () => {
         worktreePath: worktree,
         instructionSources: [
           "docs/STANDARDS.md",
-          join(repo, "docs", "CONTRIBUTING.md"),
+          absoluteSource,
         ],
       });
 
       expect(context).toContain("Source: docs/STANDARDS.md");
       expect(context).toContain("Always run tests first.");
-      expect(context).toContain("Source: /");
+      expect(context).toContain(`Source: ${absoluteSource}`);
       expect(context).toContain("Use lowercase commits.");
     } finally {
       rmSync(root, { recursive: true, force: true });

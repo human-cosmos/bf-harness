@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { resolveLongPath } from "./fs-paths.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -85,7 +86,7 @@ export class GitWorktreeManager {
       );
     }
 
-    return { path, baseCommit, branch };
+    return { path: resolveLongPath(path), baseCommit, branch };
   }
 
   private async branchExists(

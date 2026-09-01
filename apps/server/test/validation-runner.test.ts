@@ -9,7 +9,12 @@ describe("ValidationRunner", () => {
     const cwd = mkdtempSync(join(tmpdir(), "bugfix-validation-"));
     try {
       const result = await new ValidationRunner().run(
-        { id: "echo", label: "echo", command: ["echo", "ok"], timeoutSec: 10 },
+        {
+          id: "echo",
+          label: "echo",
+          command: ["node", "-e", "console.log('ok')"],
+          timeoutSec: 10,
+        },
         cwd,
       );
       expect(result.status).toBe("passed");

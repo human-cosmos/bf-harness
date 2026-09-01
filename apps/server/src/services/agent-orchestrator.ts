@@ -2,6 +2,7 @@ import {
   buildAnalyzePrompt,
   buildImplementPrompt,
   buildPlanQuestionPrompt,
+  coerceRepairPlan,
   planOutputSchema,
   planSchema,
   type ClarificationQuestion,
@@ -30,6 +31,23 @@ function stripCodeFences(text: string): string {
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+}
+
+export function extractJsonText(text: string): string {
+  const stripped = stripCodeFences(text);
+  try {
+    JSON.parse(stripped);
+    return stripped;
+  } catch {
+    const start = stripped.indexOf("{");
+    const end = stripped.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const candidate = stripped.slice(start, end + 1);
+      JSON.parse(candidate);
+      return candidate;
+    }
+    throw new Error("Agent output did not contain a JSON object");
+  }
 }
 
 export function buildApprovalResponse(
@@ -212,10 +230,16 @@ export class AgentOrchestrator {
         input: [
           {
             type: "text",
-            text: buildAnalyzePrompt(
-              contract,
-              this.promptTemplates.get("analyze"),
-            ),
+            text: [
+              buildAnalyzePrompt(
+                contract,
+                this.promptTemplates.get("analyze"),
+              ),
+              "",
+              "Your final message must be a JSON object with exactly these keys:",
+              "problemSummary, rootCauseHypothesis, evidence, proposedFiles, fixStrategy, regressionTests, validationCommands, risks, openQuestions.",
+              "Use repository-relative file paths in proposedFiles.",
+            ].join("\n"),
           },
         ],
         outputSchema: planOutputSchema,
@@ -223,13 +247,32 @@ export class AgentOrchestrator {
         approvalsReviewer: settings.security.analyzeApprovalsReviewer,
         model: settings.models.bugfixModel ?? null,
         effort: settings.models.bugfixReasoningEffort ?? null,
+        sandboxPolicy: {
+          type: "readOnly",
+          networkAccess: false,
+        },
       });
       await runtime.waitForTurnCompletion({
         idleTimeoutMs: settings.agent.analysisIdleTimeoutMs,
         maxTimeoutMs: settings.agent.analysisMaxDurationMs,
       });
 
-      const plan = planSchema.parse(JSON.parse(stripCodeFences(runtime.getAgentText())));
+      const agentText = runtime.getAgentText();
+      let plan: RepairPlan;
+      try {
+        plan = planSchema.parse(
+          coerceRepairPlan(JSON.parse(extractJsonText(agentText)), [
+            worktree.path,
+            project.repoPath,
+          ]),
+        );
+      } catch (error) {
+        throw new Error(
+          `Failed to parse repair plan from agent output: ${
+            (error as Error).message
+          }\n${agentText.slice(0, 2000)}`,
+        );
+      }
       this.workflow.submitPlan(taskId, plan);
       this.sessions.create({
         taskId,

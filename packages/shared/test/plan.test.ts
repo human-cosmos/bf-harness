@@ -3,6 +3,7 @@ import {
   buildAnalyzePrompt,
   buildImplementPrompt,
   buildPlanQuestionPrompt,
+  coerceRepairPlan,
   collectPromptTemplatePlaceholders,
   renderPromptTemplate,
   unknownPromptTemplatePlaceholders,
@@ -26,6 +27,53 @@ const plan = {
 describe("plan", () => {
   it("validates a repair plan", () => {
     expect(planSchema.parse(plan).problemSummary).toBe("login fails");
+  });
+
+  it("coerces alternate agent plan shapes and repo-absolute paths", () => {
+    const parsed = planSchema.parse(
+      coerceRepairPlan(
+        {
+          analysis: "result.txt is missing",
+          repairPlan: [
+            {
+              action: "create_file",
+              path: "C:/tmp/repo/result.txt",
+              content: "E2E_OK",
+            },
+          ],
+          verification: ["read result.txt"],
+          risks: [],
+        },
+        ["C:/tmp/repo"],
+      ),
+    );
+    expect(parsed.problemSummary).toBe("result.txt is missing");
+    expect(parsed.proposedFiles).toEqual(["result.txt"]);
+    expect(parsed.regressionTests).toEqual(["read result.txt"]);
+  });
+
+  it("wraps a string evidence field into an array", () => {
+    const parsed = planSchema.parse(
+      coerceRepairPlan({
+        ...plan,
+        evidence: "only app.txt is present",
+      }),
+    );
+    expect(parsed.evidence).toEqual(["only app.txt is present"]);
+  });
+
+  it("coerces object-shaped validation commands to strings", () => {
+    const parsed = planSchema.parse(
+      coerceRepairPlan({
+        ...plan,
+        validationCommands: [
+          { id: "echo", label: "Echo", command: ["node", "-e", "console.log('ok')"] },
+        ],
+      }),
+    );
+    expect(parsed.validationCommands).toEqual([
+      "node -e console.log('ok')",
+    ]);
   });
 
   it("requires evidence and proposed files", () => {

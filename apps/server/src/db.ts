@@ -382,4 +382,14 @@ export function migrate(db: AppDatabase): void {
       throw error;
     }
   }
+
+  // Some existing Windows databases recorded migration 3 without leaving
+  // prompt_templates behind. Recreate required tables that later code reads.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS prompt_templates (
+      key TEXT PRIMARY KEY,
+      content TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
 }

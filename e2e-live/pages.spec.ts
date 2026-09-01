@@ -28,7 +28,7 @@ async function createProject(
       repoPath,
       instructionSources: [],
       validationCommands: [
-        { id: "echo", label: "Echo", command: ["echo", "ok"], timeoutSec: 30 },
+        { id: "echo", label: "Echo", command: ["node", "-e", "console.log('ok')"], timeoutSec: 30 },
       ],
       allowedPaths: [],
       forbiddenPaths: [],

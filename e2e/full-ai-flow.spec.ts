@@ -35,7 +35,7 @@ test("complete AI bugfix main flow through the web UI", async ({
           {
             id: "echo",
             label: "Echo",
-            command: ["echo", "accepted"],
+            command: ["node", "-e", "console.log('accepted')"],
             timeoutSec: 30,
           },
         ],

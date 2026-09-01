@@ -12,6 +12,7 @@ coverage
 *.sqlite-wal
 .bugfix-harness
 .run
+.tmp-e2e
 codex-harness/
 playwright-report/
 test-results/

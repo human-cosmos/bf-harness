@@ -1,5 +1,42 @@
 # Bugfix Harness V1 全页面端到端验证报告
 
+## 2026-09-01 Windows 主流程复验（E2E-18 / AC-001）
+
+执行时间：2026-09-01  
+范围：仅主流程（创建任务 → 分析 → 计划批准 → 实施 → 验证 → 报告 → 验收），不重复全页面矩阵。
+
+### 环境
+
+- Windows 11 x64，Node.js v24.13.0，pnpm 11.22.0，Git 2.52.0.windows.1
+- Codex Runtime：官方 `codex-cli 0.142.2`（由 PATH 上的 `codex`/`codex.cmd` 解析到 native `codex.exe`）
+- 前端：http://127.0.0.1:4318 ；后端：http://127.0.0.1:4317
+
+### 基线
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | 通过 |
+| 单元/集成测试 | `pnpm test` | 通过（server 155 / web 35 / shared 36 / protocol 1） |
+| 真实 API 主链路 | `pnpm accept:e2e` | `E2E_ACCEPTANCE_OK`，最终 `ACCEPTED` |
+| Playwright UI 主链路 | `pnpm exec playwright test e2e/full-ai-flow.spec.ts` | 通过（约 1.5 分钟） |
+
+浏览器走通：在运行中的 Web UI 完成「添加项目页渲染 + 新建任务并进入任务详情」。现场 `~/.bugfix-harness/data.sqlite` 缺 `prompt_templates` 表，导致该库上的分析立刻 `FAILED`；重启后迁移修复会自动补表。完整 UI 主链路由隔离环境的 Playwright 覆盖。
+
+### 本次发现的 BUG 与修复
+
+| # | 级别 | 现象 | 根因 | 修复 |
+|---|---|---|---|---|
+| 7 | Blocker | Windows 上 `pnpm test` 失败：`echo` 验证、shebang 假二进制、`Source: /` 断言 | Windows 无独立 `echo` 可执行文件；`spawn` 不能跑 Unix shebang；绝对路径不是 `/` 开头 | 验证命令改为 `node -e`；Runtime 探测支持 `.cmd`/`.bat` 与官方 npm `codex.exe`；测试按平台写脚本；路径断言改为真实绝对路径 |
+| 8 | Major | 验证超时后临时目录 `EPERM`，子进程残留 | `ValidationRunner` 用 `SIGKILL`，Windows 杀不掉进程树 | 改为 `terminateChildTree`（`taskkill /T /F`） |
+| 9 | Blocker | `accept:e2e` 分析失败：8.3 短路径下 Windows 沙箱拒绝访问 worktree；计划 JSON 前带散文或字段形状不对 | `realpathSync` 不展开 `ADMINI~1`；官方 Codex 未严格遵守 `outputSchema` | `realpathSync.native` 展开长路径；从混合输出提取 JSON；`coerceRepairPlan` 兼容别名/对象命令/字符串 evidence，并把绝对路径收成仓库相对路径 |
+| 10 | Major | 现场库分析报 `no such table: prompt_templates` | `schema_migrations` 已记 version 3，但表不存在 | `migrate()` 结束后 `CREATE TABLE IF NOT EXISTS prompt_templates` |
+
+### 主流程结论
+
+E2E-18 / AC-001 在 Windows + 官方 Codex 0.142.2 上通过：API 与 Playwright UI 均到达 `ACCEPTED`。上述缺陷已修复并复验。
+
+---
+
 执行时间：2026-08-30
 
 ## 1. 环境

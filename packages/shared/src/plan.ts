@@ -15,6 +15,155 @@ export const planSchema = z.object({
 
 export type RepairPlan = z.infer<typeof planSchema>;
 
+function firstNonEmptyString(
+  value: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const item = value[key];
+    if (typeof item === "string" && item.trim()) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+function asStringArray(value: unknown): string[] | undefined {
+  if (typeof value === "string" && value.trim()) {
+    return [value];
+  }
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => typeof entry === "string")
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function firstStringArray(
+  value: Record<string, unknown>,
+  keys: string[],
+): string[] | undefined {
+  for (const key of keys) {
+    const item = value[key];
+    if (Array.isArray(item) && item.every((entry) => typeof entry === "string")) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+function normalizeCommandList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  const commands = value.map((item) => {
+    if (typeof item === "string") {
+      return item;
+    }
+    if (item && typeof item === "object") {
+      const record = item as {
+        command?: unknown;
+        label?: unknown;
+        id?: unknown;
+      };
+      if (Array.isArray(record.command)) {
+        return record.command.map(String).join(" ");
+      }
+      if (typeof record.command === "string") {
+        return record.command;
+      }
+      if (typeof record.label === "string") {
+        return record.label;
+      }
+      if (typeof record.id === "string") {
+        return record.id;
+      }
+    }
+    return "";
+  });
+  return commands.every((item) => item.trim()) ? commands : undefined;
+}
+
+export function relativizeProposedFiles(
+  files: string[],
+  roots: string[],
+): string[] {
+  return files.map((file) => {
+    const normalized = file.replace(/\\/g, "/");
+    for (const root of roots) {
+      const rootNorm = root.replace(/\\/g, "/").replace(/\/+$/, "");
+      if (!rootNorm) {
+        continue;
+      }
+      if (normalized.toLowerCase().startsWith(`${rootNorm.toLowerCase()}/`)) {
+        return normalized.slice(rootNorm.length + 1);
+      }
+    }
+    return file;
+  });
+}
+
+export function coerceRepairPlan(
+  raw: unknown,
+  roots: string[] = [],
+): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return raw;
+  }
+  const value = raw as Record<string, unknown>;
+  const repairSteps = Array.isArray(value.repairPlan) ? value.repairPlan : [];
+  const stepPaths = repairSteps
+    .map((step) =>
+      step &&
+      typeof step === "object" &&
+      typeof (step as { path?: unknown }).path === "string"
+        ? (step as { path: string }).path
+        : null,
+    )
+    .filter((path): path is string => Boolean(path));
+  const proposedFiles = relativizeProposedFiles(
+    firstStringArray(value, ["proposedFiles"]) ?? stepPaths,
+    roots,
+  );
+  const strategyFromSteps =
+    repairSteps.length > 0 ? JSON.stringify(repairSteps) : undefined;
+
+  return {
+    problemSummary:
+      firstNonEmptyString(value, ["problemSummary", "summary", "analysis"]) ??
+      value.problemSummary,
+    rootCauseHypothesis:
+      firstNonEmptyString(value, [
+        "rootCauseHypothesis",
+        "rootCause",
+        "analysis",
+      ]) ?? value.rootCauseHypothesis,
+    evidence:
+      firstStringArray(value, ["evidence"]) ??
+      asStringArray(value.evidence) ??
+      (typeof value.analysis === "string" ? [value.analysis] : value.evidence),
+    proposedFiles,
+    fixStrategy:
+      firstNonEmptyString(value, ["fixStrategy"]) ??
+      strategyFromSteps ??
+      value.fixStrategy,
+    regressionTests:
+      firstStringArray(value, ["regressionTests", "verification"]) ??
+      value.regressionTests,
+    validationCommands:
+      firstStringArray(value, ["validationCommands"]) ??
+      firstStringArray(value, ["verification"]) ??
+      normalizeCommandList(value.validationCommands) ??
+      value.validationCommands,
+    risks: firstStringArray(value, ["risks"]) ?? value.risks ?? [],
+    openQuestions:
+      firstStringArray(value, ["openQuestions"]) ?? value.openQuestions ?? [],
+  };
+}
+
 export const planOutputSchema = {
   type: "object",
   additionalProperties: false,

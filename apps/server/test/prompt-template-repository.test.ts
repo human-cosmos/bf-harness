@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../src/db.js";
 import { PromptTemplateRepository } from "../src/repositories/prompt-template-repository.js";
@@ -47,5 +50,23 @@ describe("PromptTemplateRepository", () => {
     );
 
     db.close();
+  });
+
+  it("recreates a missing prompt_templates table on reopen", () => {
+    const root = mkdtempSync(join(tmpdir(), "bugfix-prompt-repair-"));
+    const dbPath = join(root, "data.sqlite");
+    try {
+      const first = openDatabase(dbPath);
+      first.exec("DROP TABLE prompt_templates");
+      first.close();
+
+      const second = openDatabase(dbPath);
+      const repository = new PromptTemplateRepository(second);
+      expect(repository.list()).toHaveLength(3);
+      expect(repository.get("analyze")).toContain("Do not modify files");
+      second.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

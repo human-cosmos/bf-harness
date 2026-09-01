@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ValidationCommand } from "@bugfix-harness/shared";
+import { terminateChildTree } from "./process-guard.js";
 
 export type ValidationStatus = "passed" | "failed" | "timeout" | "skipped";
 
@@ -83,7 +84,7 @@ export class ValidationRunner {
       };
 
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
+        terminateChildTree(child);
         finish({
           finishedAt: new Date().toISOString(),
           exitCode: null,

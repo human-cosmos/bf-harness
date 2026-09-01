@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import type { SystemSettingsService } from "./system-settings-service.js";
+import { quoteWindowsCommand, usesWindowsShell } from "./process-guard.js";
 
 const RUNTIME_COMMAND = "codex-harness app-server --stdio";
 
@@ -17,6 +18,7 @@ export interface CodexRuntimeCandidate {
   available: boolean;
   version?: string;
   reason?: string;
+  spawnPath?: string;
 }
 
 export interface CodexRuntimeInfo {
@@ -32,6 +34,51 @@ export interface CodexRuntimeInfo {
 interface ExecutableInspection {
   available: boolean;
   version?: string;
+  spawnPath?: string;
+}
+
+function officialVendorBinary(shimPath: string): string | null {
+  if (process.platform !== "win32") {
+    return null;
+  }
+  const name = basename(shimPath).toLowerCase();
+  if (name !== "codex" && name !== "codex.cmd" && name !== "codex.bat") {
+    return null;
+  }
+
+  const nodeDir = dirname(shimPath);
+  const triple =
+    process.arch === "arm64"
+      ? "aarch64-pc-windows-msvc"
+      : "x86_64-pc-windows-msvc";
+  const pkg =
+    process.arch === "arm64" ? "codex-win32-arm64" : "codex-win32-x64";
+  const candidates = [
+    join(
+      nodeDir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "node_modules",
+      "@openai",
+      pkg,
+      "vendor",
+      triple,
+      "bin",
+      "codex.exe",
+    ),
+    join(
+      nodeDir,
+      "node_modules",
+      "@openai",
+      "codex",
+      "vendor",
+      triple,
+      "bin",
+      "codex.exe",
+    ),
+  ];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 function inspectExecutable(path: string): ExecutableInspection {
@@ -42,12 +89,22 @@ function inspectExecutable(path: string): ExecutableInspection {
     if (!statSync(path).isFile()) {
       return { available: false };
     }
-    const result = spawnSync(path, ["--version"], {
-      encoding: "utf8",
-      timeout: 5_000,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const spawnPath = officialVendorBinary(path) ?? path;
+    const useShell = usesWindowsShell(spawnPath);
+    const result = useShell
+      ? spawnSync(`${quoteWindowsCommand(spawnPath)} --version`, {
+          encoding: "utf8",
+          timeout: 5_000,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          shell: true,
+        })
+      : spawnSync(spawnPath, ["--version"], {
+          encoding: "utf8",
+          timeout: 5_000,
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
     if (result.error) {
       return { available: false };
     }
@@ -55,7 +112,7 @@ function inspectExecutable(path: string): ExecutableInspection {
     const stderr = result.stderr?.trim();
     const version = stdout || stderr || undefined;
     const available = result.status === 0;
-    return { available, version };
+    return { available, version, spawnPath: available ? spawnPath : undefined };
   } catch {
     return { available: false };
   }
@@ -68,6 +125,8 @@ function pathCandidates(commandName: string, pathValue: string): string[] {
     paths.push(join(dir, commandName));
     if (process.platform === "win32") {
       paths.push(join(dir, `${commandName}.exe`));
+      paths.push(join(dir, `${commandName}.cmd`));
+      paths.push(join(dir, `${commandName}.bat`));
     }
   }
   return paths;
@@ -126,6 +185,7 @@ export class CodexRuntimeService {
         source: candidate.source,
         available: inspection.available,
         version: inspection.version,
+        spawnPath: inspection.spawnPath,
         reason: inspection.available
           ? undefined
           : "文件不存在、不可执行，或无法作为 Codex 运行。",
@@ -135,7 +195,7 @@ export class CodexRuntimeService {
     const firstAvailable = inspected.find((item) => item.available) ?? null;
     return {
       runtimeCommand: RUNTIME_COMMAND,
-      codexBin: firstAvailable?.path ?? null,
+      codexBin: firstAvailable?.spawnPath ?? firstAvailable?.path ?? null,
       source: firstAvailable?.source ?? null,
       available: Boolean(firstAvailable),
       version: firstAvailable?.version ?? null,

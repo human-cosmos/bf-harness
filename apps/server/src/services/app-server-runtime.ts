@@ -4,7 +4,11 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { terminateChildTree } from "./process-guard.js";
+import {
+  quoteWindowsCommand,
+  terminateChildTree,
+  usesWindowsShell,
+} from "./process-guard.js";
 
 const localCodexBin = join(
   import.meta.url ? dirname(fileURLToPath(import.meta.url)) : process.cwd(),
@@ -133,13 +137,26 @@ export class AppServerRuntime extends EventEmitter {
   }
 
   start(): this {
-    const child = spawn(this.options.codexBin, ["app-server", "--stdio"], {
-      cwd: this.options.cwd,
-      env: process.env,
-      stdio: ["pipe", "pipe", "inherit"],
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
+    const useShell = usesWindowsShell(this.options.codexBin);
+    const child = useShell
+      ? spawn(
+          `${quoteWindowsCommand(this.options.codexBin)} app-server --stdio`,
+          {
+            cwd: this.options.cwd,
+            env: process.env,
+            stdio: ["pipe", "pipe", "inherit"],
+            windowsHide: true,
+            detached: false,
+            shell: true,
+          },
+        )
+      : spawn(this.options.codexBin, ["app-server", "--stdio"], {
+          cwd: this.options.cwd,
+          env: process.env,
+          stdio: ["pipe", "pipe", "inherit"],
+          windowsHide: true,
+          detached: process.platform !== "win32",
+        });
     this.child = child;
 
     child.on("error", (error) => {
