@@ -91,9 +91,9 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   security: {
     conversationDefaults: { ...DEFAULT_CONVERSATION_POLICY },
     bugfixAutomationMode: "auto",
-    analyzeApprovalPolicy: "never",
+    analyzeApprovalPolicy: "on-request",
     analyzeApprovalsReviewer: "auto_review",
-    implementApprovalPolicy: "never",
+    implementApprovalPolicy: "on-request",
     implementApprovalsReviewer: "auto_review",
   },
   projectDefaults: {

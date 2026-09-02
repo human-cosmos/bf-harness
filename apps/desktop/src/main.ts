@@ -1,6 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -32,22 +37,51 @@ const harnessHome = path.join(app.getPath("userData"), "harness");
 mkdirSync(codexHome, { recursive: true });
 mkdirSync(harnessHome, { recursive: true });
 
-if (!existsSync(codexConfigFile)) {
-  writeFileSync(
-    codexConfigFile,
-    [
-      'model_provider = "deepseek"',
-      'model = "deepseek-v4-flash"',
-      "",
-      "[model_providers.deepseek]",
-      'name = "DeepSeek"',
-      'base_url = "https://api.deepseek.com/v1"',
-      'wire_api = "responses"',
-      "requires_openai_auth = true",
-      "",
-    ].join("\n"),
-  );
+function ensureCodexConfig(): void {
+  if (!existsSync(codexConfigFile)) {
+    writeFileSync(codexConfigFile, codexConfigToml());
+    return;
+  }
+
+  const current = readFileSync(codexConfigFile, "utf8");
+  const windowsSection = /^\s*\[windows\]\s*$/m;
+  const hasSandboxSetting = /^\s*sandbox\s*=/m;
+  if (!windowsSection.test(current) && !hasSandboxSetting.test(current)) {
+    writeFileSync(
+      codexConfigFile,
+      `${current.replace(/\s+$/, "")}\n\n[windows]\nsandbox = "elevated"\n`,
+    );
+    return;
+  }
+  if (windowsSection.test(current) && !hasSandboxSetting.test(current)) {
+    writeFileSync(
+      codexConfigFile,
+      current.replace(
+        /^\s*\[windows\]\s*$/m,
+        (section) => `${section}\nsandbox = "elevated"`,
+      ),
+    );
+  }
 }
+
+function codexConfigToml(): string {
+  return [
+    'model_provider = "deepseek"',
+    'model = "deepseek-v4-flash"',
+    "",
+    "[model_providers.deepseek]",
+    'name = "DeepSeek"',
+    'base_url = "https://api.deepseek.com/v1"',
+    'wire_api = "responses"',
+    "requires_openai_auth = true",
+    "",
+    "[windows]",
+    'sandbox = "elevated"',
+    "",
+  ].join("\n");
+}
+
+ensureCodexConfig();
 
 function getFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {

@@ -19,7 +19,10 @@ import { ProjectRepository } from "../repositories/project-repository.js";
 import { TaskRepository } from "../repositories/task-repository.js";
 import { PromptTemplateRepository } from "../repositories/prompt-template-repository.js";
 import { WorktreeRepository } from "../repositories/worktree-repository.js";
-import { AppServerRuntime } from "./app-server-runtime.js";
+import {
+  AppServerRuntime,
+  type RuntimeMessage,
+} from "./app-server-runtime.js";
 import { ExecutionService } from "./execution-service.js";
 import { WorkflowService } from "./workflow-service.js";
 import { RuntimeEventRecorder } from "./runtime-event-recorder.js";
@@ -189,6 +192,70 @@ export class AgentOrchestrator {
     }
   }
 
+  private async resolveApprovalResponse(
+    taskId: string,
+    message: RuntimeMessage,
+    worktreePath: string,
+  ): Promise<unknown | undefined> {
+    const params = (message.params ?? {}) as Record<string, unknown>;
+    const method = message.method ?? "";
+    let request: ApprovalRequest | null = null;
+
+    if (method === "item/commandExecution/requestApproval") {
+      const networkContext = params.networkApprovalContext as
+        | { host?: string | null }
+        | null
+        | undefined;
+      if (networkContext?.host) {
+        request = { kind: "network", host: String(networkContext.host) };
+      } else {
+        request = {
+          kind: "command",
+          command: String(params.command ?? ""),
+          cwd: String(params.cwd ?? worktreePath),
+        };
+      }
+    } else if (method === "execCommandApproval") {
+      const command = Array.isArray(params.command)
+        ? params.command.map((item) => String(item)).join(" ")
+        : String(params.command ?? "");
+      request = {
+        kind: "command",
+        command,
+        cwd: String(params.cwd ?? worktreePath),
+      };
+    } else if (method === "item/fileChange/requestApproval") {
+      request = {
+        kind: "file",
+        path: String(params.grantRoot ?? worktreePath),
+        action: "write",
+      };
+    } else if (method === "applyPatchApproval") {
+      request = {
+        kind: "file",
+        path: String(params.grantRoot ?? worktreePath),
+        action: "write",
+      };
+    } else if (method === "item/permissions/requestApproval") {
+      request = {
+        kind: "permissions",
+        reason: params.reason ? String(params.reason) : undefined,
+        permissions: params.permissions,
+      };
+    }
+
+    if (!request) {
+      return undefined;
+    }
+
+    const result = await this.execution.requestApprovalDecision(
+      taskId,
+      request,
+      message.id,
+    );
+    return buildApprovalResponse(method, result.decision, params);
+  }
+
   async analyze(taskId: string): Promise<RepairPlan> {
     let task = this.requireTask(taskId);
     if (task.status === "DRAFT") {
@@ -255,7 +322,7 @@ export class AgentOrchestrator {
           });
           return { answers };
         }
-        return undefined;
+        return this.resolveApprovalResponse(taskId, message, worktree.path);
       };
       const detach = new RuntimeEventRecorder(
         this.events,
@@ -444,65 +511,8 @@ export class AgentOrchestrator {
       "implement",
     ).attach(runtime);
 
-    runtime.onServerRequest = async (message) => {
-      const params = (message.params ?? {}) as Record<string, unknown>;
-      const method = message.method ?? "";
-      let request: ApprovalRequest | null = null;
-
-      if (method === "item/commandExecution/requestApproval") {
-        const networkContext = params.networkApprovalContext as
-          | { host?: string | null }
-          | null
-          | undefined;
-        if (networkContext?.host) {
-          request = { kind: "network", host: String(networkContext.host) };
-        } else {
-          request = {
-            kind: "command",
-            command: String(params.command ?? ""),
-            cwd: String(params.cwd ?? worktree.path),
-          };
-        }
-      } else if (method === "execCommandApproval") {
-        const command = Array.isArray(params.command)
-          ? params.command.map((item) => String(item)).join(" ")
-          : String(params.command ?? "");
-        request = {
-          kind: "command",
-          command,
-          cwd: String(params.cwd ?? worktree.path),
-        };
-      } else if (method === "item/fileChange/requestApproval") {
-        request = {
-          kind: "file",
-          path: String(params.grantRoot ?? worktree.path),
-          action: "write",
-        };
-      } else if (method === "applyPatchApproval") {
-        request = {
-          kind: "file",
-          path: String(params.grantRoot ?? worktree.path),
-          action: "write",
-        };
-      } else if (method === "item/permissions/requestApproval") {
-        request = {
-          kind: "permissions",
-          reason: params.reason ? String(params.reason) : undefined,
-          permissions: params.permissions,
-        };
-      }
-
-      if (!request) {
-        return undefined;
-      }
-
-      const result = await this.execution.requestApprovalDecision(
-        taskId,
-        request,
-        message.id,
-      );
-      return buildApprovalResponse(method, result.decision, params);
-    };
+    runtime.onServerRequest = async (message) =>
+      this.resolveApprovalResponse(taskId, message, worktree.path);
 
     try {
       await runtime.initialize({

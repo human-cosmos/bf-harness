@@ -604,6 +604,18 @@ describe("BugfixService", () => {
           return [];
         },
       );
+      vi.spyOn(service.execution, "generateDiff").mockResolvedValue({
+        files: [{ path: "src/app.ts", status: "modified" }],
+        unifiedDiff: "diff --git a/src/app.ts b/src/app.ts",
+        stats: {
+          total: 1,
+          added: 0,
+          modified: 1,
+          deleted: 0,
+          untracked: 0,
+          renamed: 0,
+        },
+      });
       vi.spyOn(service.execution, "buildReport").mockResolvedValue({} as never);
 
       service.startAnalyze(taskId);
@@ -640,6 +652,53 @@ describe("BugfixService", () => {
         service.startAnalyze(taskId);
         await vi.waitUntil(() => service.tasks.get(taskId)?.status === "FAILED");
         expect(service.getAnalysisRun(taskId)?.status).toBe("SUCCEEDED");
+      } finally {
+        error.mockRestore();
+      }
+    } finally {
+      rmSync(worktreeRoot, { recursive: true, force: true });
+      db.close();
+    }
+  });
+
+  it("does not auto-accept when implementation changes no files", async () => {
+    const { db, service, worktreeRoot } = createService();
+    try {
+      service.systemSettings.save({
+        ...DEFAULT_SYSTEM_SETTINGS,
+        security: {
+          ...DEFAULT_SYSTEM_SETTINGS.security,
+          bugfixAutomationMode: "auto",
+        },
+      });
+      const { taskId } = createAnalyzableTask(service);
+      vi.spyOn(service.agent, "analyze").mockImplementation(async (id) => {
+        const plan = samplePlan();
+        service.workflow.submitPlan(id, plan);
+        return plan;
+      });
+      vi.spyOn(service.agent, "implement").mockImplementation(async (id) => {
+        service.workflow.transitionTask(id, "VALIDATING");
+        return "done";
+      });
+      vi.spyOn(service.execution, "generateDiff").mockResolvedValue({
+        files: [],
+        unifiedDiff: "",
+        stats: {
+          total: 0,
+          added: 0,
+          modified: 0,
+          deleted: 0,
+          untracked: 0,
+          renamed: 0,
+        },
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      try {
+        service.startAnalyze(taskId);
+        await vi.waitUntil(() => service.tasks.get(taskId)?.status === "FAILED");
+        expect(service.tasks.get(taskId)?.status).toBe("FAILED");
       } finally {
         error.mockRestore();
       }

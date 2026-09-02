@@ -38,7 +38,10 @@ describe("system settings schema", () => {
   it("defaults bugfix automation to automatic execution", () => {
     expect(DEFAULT_SYSTEM_SETTINGS.security.bugfixAutomationMode).toBe("auto");
     expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalPolicy).toBe(
-      "never",
+      "on-request",
+    );
+    expect(DEFAULT_SYSTEM_SETTINGS.security.implementApprovalPolicy).toBe(
+      "on-request",
     );
     expect(DEFAULT_SYSTEM_SETTINGS.security.analyzeApprovalsReviewer).toBe(
       "auto_review",
@@ -46,16 +49,10 @@ describe("system settings schema", () => {
   });
 
   it("fills missing security fields from defaults", () => {
-    const merged = mergeSystemSettings({
-      security: {
-        analyzeApprovalPolicy: "never",
-        analyzeApprovalsReviewer: "auto_review",
-        implementApprovalPolicy: "never",
-        implementApprovalsReviewer: "auto_review",
-      },
-    });
+    const merged = mergeSystemSettings({});
     expect(merged.security.bugfixAutomationMode).toBe("auto");
-    expect(merged.security.analyzeApprovalPolicy).toBe("never");
+    expect(merged.security.analyzeApprovalPolicy).toBe("on-request");
+    expect(merged.security.implementApprovalPolicy).toBe("on-request");
     expect(merged.agent).toEqual(DEFAULT_SYSTEM_SETTINGS.agent);
   });
 });

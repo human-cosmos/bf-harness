@@ -576,6 +576,12 @@ export class BugfixService {
     try {
       this.workflow.approvePlan(taskId);
       await this.agent.implement(taskId);
+      const diff = await this.execution.generateDiff(taskId);
+      if (diff.files.length === 0) {
+        throw new Error(
+          "Implementation completed without modifying any files; refusing to auto-accept",
+        );
+      }
       await this.runAutomatedValidationLoop(taskId);
 
       const task = this.tasks.get(taskId);
